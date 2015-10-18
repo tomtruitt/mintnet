@@ -206,6 +206,9 @@ func initMachine(name string, repo string, head string) (info string, err error)
 		return "", errors.New("Failed to init tmnode on machine " + name)
 	}
 
+	// Give it some time to install and make repo.
+	time.Sleep(time.Second * 10)
+
 	// Get the node's validator info
 	// Need to retry to wait until tendermint is installed
 	for {
@@ -214,6 +217,7 @@ func initMachine(name string, repo string, head string) (info string, err error)
 		if !ok || output == "" {
 			fmt.Println(Yellow(Fmt("tendermint not yet installed in %v. Waiting...", name)))
 			time.Sleep(time.Second * 5)
+			continue
 			// return "", errors.New("Failed to get tmnode validator on machine " + name)
 		} else {
 			fmt.Println(Blue(Fmt("validator for %v: %v", name, output)))
