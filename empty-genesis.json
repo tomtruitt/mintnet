@@ -1,0 +1,11 @@
+{
+	"chain_id": "testnet-dontcare",
+	"accounts": [
+		{
+			"address": "DEADBEEF00000000000000000000000000000000",
+			"amount": 1000,
+			"name": "sample_account",
+			"permissions": null
+		}
+	]
+}

@@ -3,13 +3,17 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
+	acm "github.com/tendermint/tendermint/account"
 	. "github.com/tendermint/tendermint/common"
 	pcm "github.com/tendermint/tendermint/process"
+	stypes "github.com/tendermint/tendermint/state/types"
+	"github.com/tendermint/tendermint/wire"
 
 	"github.com/codegangsta/cli"
 )
@@ -43,9 +47,43 @@ func main() {
 					Value: "origin/develop",
 					Usage: "branch/commit-hash to make & run",
 				},
+				cli.StringFlag{
+					Name:  "gen-file-in",
+					Value: "empty-genesis.json",
+					Usage: "input genesis file for reading accounts, etc",
+				},
+				cli.StringFlag{
+					Name:  "gen-file-out",
+					Value: "genesis.json",
+					Usage: "output genesis file with new validators",
+				},
 			},
 			Action: func(c *cli.Context) {
 				cmdCreate(c)
+			},
+		},
+		{
+			Name:  "copy-genesis",
+			Usage: "Copy genesis file to all nodes",
+			Flags: []cli.Flag{
+				cli.IntFlag{
+					Name:  "nodes",
+					Value: 4,
+					Usage: "4 or more nodes",
+				},
+				cli.StringFlag{
+					Name:  "prefix",
+					Value: "testnode",
+					Usage: "node name prefix",
+				},
+				cli.StringFlag{
+					Name:  "gen-file",
+					Value: "genesis.json",
+					Usage: "genesis file to copy",
+				},
+			},
+			Action: func(c *cli.Context) {
+				cmdCopyGenesis(c)
 			},
 		},
 		{
@@ -83,18 +121,62 @@ func cmdCreate(c *cli.Context) {
 		fmt.Println(Fmt("Successfully deployed %v machines", numNodes))
 	}
 
+	// Get machine ips
+	ips, errs := getIPMachines(prefix, numNodes)
+	if len(errs) > 0 {
+		Exit(Fmt("There were %v errors", len(errs)))
+	} else {
+		fmt.Println(Fmt("Machine ips: %v", ips))
+	}
+
+	// Generate seeds from those ips
+	seeds := ""
+	for i, ip := range ips {
+		if i > 0 {
+			seeds = seeds + ","
+		}
+		seeds = seeds + ip + ":46656"
+	}
+
 	// Run containers.
 	// Pull repo to given head.
 	repo := c.String("repo")
 	head := c.String("head")
-	infos, errs := initMachines(prefix, numNodes, repo, head)
+	infos, errs := initMachines(prefix, numNodes, repo, head, seeds)
 	if len(errs) > 0 {
 		Exit(Fmt("There were %v errors", len(errs)))
 	} else {
 		fmt.Println(Fmt("Successfully initialized %v machines", numNodes))
 	}
+	fmt.Println("Infos", infos)
 
-	fmt.Println(Green("Infos", infos))
+	// Read input genesis
+	genInFile, genOutFile := c.String("gen-file-in"), c.String("gen-file-out")
+	genInBytes, err := ioutil.ReadFile(genInFile)
+	if err != nil {
+		Exit(Fmt("Couldn't read input genesis file: %v", err))
+	}
+	genDoc := stypes.GenesisDocFromJSON(genInBytes)
+
+	// Replace validators
+	genDoc.Validators = nil
+	for _, info := range infos {
+		genDoc.Validators = append(genDoc.Validators, stypes.GenesisValidator{
+			Name:   info.name,
+			PubKey: info.pubKey,
+			Amount: 1,
+		})
+	}
+
+	// Replace other info
+	genDoc.GenesisTime = time.Now()
+	genDoc.ChainID = Fmt("testnet-%v", RandStr(6))
+
+	// Write output genesis
+	genOutBytes := wire.JSONBytesPretty(genDoc)
+	MustWriteFile(genOutFile, genOutBytes)
+	fmt.Println(string(genOutBytes))
+	fmt.Println(Fmt("Wrote output genesis to %v", genOutFile))
 }
 
 // Destroy a Tendermint network
@@ -128,6 +210,21 @@ func cmdDestroy(c *cli.Context) {
 	wg.Wait()
 
 	fmt.Println("Success!")
+}
+
+// Copy genesis file to network, launching it.
+func cmdCopyGenesis(c *cli.Context) {
+	prefix := c.String("prefix")
+	numNodes := c.Int("nodes")
+	genFile := c.String("gen-file")
+
+	// Copy output genesis to machines
+	errs := copyFileToMachines(prefix, numNodes, genFile, "/data/tendermint/genesis.json")
+	if len(errs) > 0 {
+		Exit(Fmt("There were %v errors", len(errs)))
+	} else {
+		fmt.Println(Fmt("Successfully copied genesis to %v machines", numNodes))
+	}
 }
 
 //--------------------------------------------------------------------------------
@@ -170,18 +267,28 @@ func provisionMachine(args []string, name string) error {
 // numNodes: number of nodes to init
 // repo: repository to pull from, e.g. github.com/tendermint/tendermint
 // head: git commit hash to make and run
-func initMachines(prefix string, numNodes int, repo string, head string) (infos []string, errs []error) {
+// seeds: seed list
+func initMachines(prefix string, numNodes int, repo string, head string, seeds string) (infos []nodeInfo, errs []error) {
 	var wg sync.WaitGroup
 	for i := 1; i <= numNodes; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			info, err := initMachine(Fmt("%v-%v", prefix, i), repo, head)
+			name := Fmt("%v-%v", prefix, i)
+			pubKeyStr, err := initMachine(name, repo, head, seeds)
 			if err != nil {
 				errs = append(errs, err)
-			} else {
-				infos = append(infos, info)
+				return
 			}
+			pubKey, err := readPubKeyEd25519(pubKeyStr)
+			if err != nil {
+				errs = append(errs, err)
+				return
+			}
+			infos = append(infos, nodeInfo{
+				name:   name,
+				pubKey: pubKey,
+			})
 		}(i)
 	}
 	wg.Wait()
@@ -193,7 +300,8 @@ func initMachines(prefix string, numNodes int, repo string, head string) (infos 
 // name: name of machine
 // repo: repository to pull from, e.g. github.com/tendermint/tendermint
 // head: git commit hash to make and run
-func initMachine(name string, repo string, head string) (info string, err error) {
+// seeds: seed list
+func initMachine(name string, repo string, head string, seeds string) (info string, err error) {
 	// Initialize the tmdata container
 	args := []string{"ssh", name, "docker run --name tmdata --entrypoint /bin/echo tendermint/tmbase Data-only container for node"}
 	if !runProcess("init-tmdata-"+name, "docker-machine", args) {
@@ -201,7 +309,7 @@ func initMachine(name string, repo string, head string) (info string, err error)
 	}
 
 	// Initialize the tmnode container
-	args = []string{"ssh", name, Fmt("docker run --name tmnode --volumes-from tmdata -d -p 46656:46656 -p 46657:46657 -e TMREPO=\"%v\" -e TMHEAD=\"%v\" tendermint/tmbase", repo, head)}
+	args = []string{"ssh", name, Fmt("docker run --name tmnode --volumes-from tmdata -d -p 46656:46656 -p 46657:46657 -e TMNAME=\"%v\" -e TMREPO=\"%v\" -e TMHEAD=\"%v\" -e TMSEEDS=\"%v\" tendermint/tmbase", name, repo, head, seeds)}
 	if !runProcess("init-tmnode-"+name, "docker-machine", args) {
 		return "", errors.New("Failed to init tmnode on machine " + name)
 	}
@@ -220,7 +328,7 @@ func initMachine(name string, repo string, head string) (info string, err error)
 			continue
 			// return "", errors.New("Failed to get tmnode validator on machine " + name)
 		} else {
-			fmt.Println(Blue(Fmt("validator for %v: %v", name, output)))
+			fmt.Println(Fmt("validator for %v: %v", name, output))
 			return output, nil
 		}
 	}
@@ -267,6 +375,20 @@ func listMachines(prefix string) ([]string, error) {
 	return matched, nil
 }
 
+// Get ip of a machines
+func getIPMachines(prefix string, numNodes int) (ips []string, errs []error) {
+	for i := 1; i <= numNodes; i++ {
+		name := Fmt("%v-%v", prefix, i)
+		ip, err := getIPMachine(name)
+		if err != nil {
+			errs = append(errs, err)
+		} else {
+			ips = append(ips, ip)
+		}
+	}
+	return ips, errs
+}
+
 // Get ip of a machine
 // name: name of machine
 func getIPMachine(name string) (string, error) {
@@ -276,6 +398,48 @@ func getIPMachine(name string) (string, error) {
 		return "", errors.New("Failed to get ip of machine" + name)
 	}
 	return strings.TrimSpace(output), nil
+}
+
+func copyFileToMachines(prefix string, numNodes int, srcPath string, dstPath string) (errs []error) {
+	var wg sync.WaitGroup
+	for i := 1; i <= numNodes; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			name := Fmt("%v-%v", prefix, i)
+			err := copyToMachine(name, srcPath, dstPath)
+			if err != nil {
+				errs = append(errs, err)
+				return
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	return errs
+}
+
+// Copy a file from srcPath (local machine) to
+// dstPath in the tmnode container.
+func copyToMachine(name string, srcPath string, dstPath string) error {
+
+	// First, copy the file to a temporary location
+	// in the machine.
+	tempFile := "temp_" + RandStr(12)
+	args := []string{"scp", srcPath, name + ":" + tempFile}
+	if !runProcess("scp-file-"+name, "docker-machine", args) {
+		return errors.New("Failed to copy file to machine " + name)
+	}
+
+	// Next, docker cp the file into the container
+	args = []string{"ssh", name, Fmt("docker cp %v tmnode:%v", tempFile, dstPath)}
+	if !runProcess("docker-cp-file-"+name, "docker-machine", args) {
+		return errors.New("Failed to docker-cp file to container in machine " + name)
+	}
+
+	// TODO: remove tempFile
+
+	return nil
 }
 
 //--------------------------------------------------------------------------------
@@ -317,4 +481,16 @@ func runProcessGetResult(label string, command string, args []string) (string, b
 		fmt.Println(Red(string(outFile.Bytes())))
 		return string(outFile.Bytes()), false
 	}
+}
+
+//--------------------------------------------------------------------------------
+
+type nodeInfo struct {
+	name   string
+	pubKey acm.PubKeyEd25519
+}
+
+func readPubKeyEd25519(str string) (pubKey acm.PubKeyEd25519, err error) {
+	wire.ReadJSONPtr(&pubKey, []byte(str), &err)
+	return
 }
