@@ -1,4 +1,4 @@
-First, get a DigitalOcean account and access token.
+First, install `docker-machine` and get a DigitalOcean account and access token.
 
 To create a testnet on DigitalOcean:
 
