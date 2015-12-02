@@ -9,11 +9,11 @@ import (
 	"sync"
 	"time"
 
-	acm "github.com/tendermint/tendermint/account"
-	. "github.com/tendermint/tendermint/common"
-	pcm "github.com/tendermint/tendermint/process"
-	stypes "github.com/tendermint/tendermint/state/types"
-	"github.com/tendermint/tendermint/wire"
+	. "github.com/tendermint/go-common"
+	"github.com/tendermint/go-crypto"
+	pcm "github.com/tendermint/go-process"
+	"github.com/tendermint/go-wire"
+	"github.com/tendermint/tendermint/types"
 
 	"github.com/codegangsta/cli"
 )
@@ -30,7 +30,7 @@ func main() {
 				cli.IntFlag{
 					Name:  "nodes",
 					Value: 4,
-					Usage: "4 or more nodes",
+					Usage: "number of nodes",
 				},
 				cli.StringFlag{
 					Name:  "prefix",
@@ -38,14 +38,24 @@ func main() {
 					Usage: "node name prefix",
 				},
 				cli.StringFlag{
-					Name:  "repo",
+					Name:  "tmrepo",
 					Value: "github.com/tendermint/tendermint",
-					Usage: "repository to pull",
+					Usage: "tm repository to pull",
 				},
 				cli.StringFlag{
-					Name:  "head",
-					Value: "origin/develop",
-					Usage: "branch/commit-hash to make & run",
+					Name:  "tmhead",
+					Value: "origin/master",
+					Usage: "tm branch/commit-hash to make & run",
+				},
+				cli.StringFlag{
+					Name:  "apprepo",
+					Value: "github.com/tendermint/tmsp",
+					Usage: "app repository to pull",
+				},
+				cli.StringFlag{
+					Name:  "apphead",
+					Value: "origin/master",
+					Usage: "app branch/commit-hash to make & run",
 				},
 				cli.StringFlag{
 					Name:  "gen-file-in",
@@ -66,11 +76,6 @@ func main() {
 			Name:  "copy-genesis",
 			Usage: "Copy genesis file to all nodes",
 			Flags: []cli.Flag{
-				cli.IntFlag{
-					Name:  "nodes",
-					Value: 4,
-					Usage: "4 or more nodes",
-				},
 				cli.StringFlag{
 					Name:  "prefix",
 					Value: "testnode",
@@ -109,8 +114,8 @@ func main() {
 
 // Create a new Tendermint network with newly provisioned machines
 func cmdCreate(c *cli.Context) {
-	args := c.Args() // Args to docker-machine
-	prefix := c.String("prefix")
+	args := c.Args()             // Args to docker-machine
+	prefix := c.String("prefix") // Machine name prefix
 	numNodes := c.Int("nodes")
 
 	// Provision numNodes machines
@@ -140,9 +145,11 @@ func cmdCreate(c *cli.Context) {
 
 	// Run containers.
 	// Pull repo to given head.
-	repo := c.String("repo")
-	head := c.String("head")
-	infos, errs := initMachines(prefix, numNodes, repo, head, seeds)
+	tmrepo := c.String("tmrepo")
+	tmhead := c.String("tmhead")
+	apprepo := c.String("apprepo")
+	apphead := c.String("apphead")
+	infos, errs := initMachines(prefix, numNodes, tmrepo, tmhead, apprepo, apphead, seeds)
 	if len(errs) > 0 {
 		Exit(Fmt("There were %v errors", len(errs)))
 	} else {
@@ -156,14 +163,14 @@ func cmdCreate(c *cli.Context) {
 	if err != nil {
 		Exit(Fmt("Couldn't read input genesis file: %v", err))
 	}
-	genDoc := stypes.GenesisDocFromJSON(genInBytes)
+	genDoc := types.GenesisDocFromJSON(genInBytes)
 
 	// Replace validators
 	genDoc.Validators = nil
 	for _, info := range infos {
-		genDoc.Validators = append(genDoc.Validators, stypes.GenesisValidator{
-			Name:   info.name,
-			PubKey: info.pubKey,
+		genDoc.Validators = append(genDoc.Validators, types.GenesisValidator{
+			Name:   info.Name,
+			PubKey: info.PubKey,
 			Amount: 1,
 		})
 	}
@@ -265,17 +272,17 @@ func provisionMachine(args []string, name string) error {
 // Initialize a number of machines using docker-machine.
 // prefix: node name prefix
 // numNodes: number of nodes to init
-// repo: repository to pull from, e.g. github.com/tendermint/tendermint
-// head: git commit hash to make and run
+// tmrepo: tm repository to pull from, e.g. github.com/tendermint/tendermint
+// tmhead: git commit hash to make and run
 // seeds: seed list
-func initMachines(prefix string, numNodes int, repo string, head string, seeds string) (infos []nodeInfo, errs []error) {
+func initMachines(prefix string, numNodes int, tmrepo string, tmhead string, apprepo string, apphead string, seeds string) (infos []MachineInfo, errs []error) {
 	var wg sync.WaitGroup
 	for i := 1; i <= numNodes; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			name := Fmt("%v-%v", prefix, i)
-			pubKeyStr, err := initMachine(name, repo, head, seeds)
+			pubKeyStr, err := initMachine(name, tmrepo, tmhead, apprepo, apphead, seeds)
 			if err != nil {
 				errs = append(errs, err)
 				return
@@ -285,9 +292,9 @@ func initMachines(prefix string, numNodes int, repo string, head string, seeds s
 				errs = append(errs, err)
 				return
 			}
-			infos = append(infos, nodeInfo{
-				name:   name,
-				pubKey: pubKey,
+			infos = append(infos, MachineInfo{
+				Name:   name,
+				PubKey: pubKey,
 			})
 		}(i)
 	}
@@ -296,20 +303,79 @@ func initMachines(prefix string, numNodes int, repo string, head string, seeds s
 	return infos, errs
 }
 
+func eB(s string) string {
+	s = strings.Replace(s, `\`, `\\`, -1)
+	s = strings.Replace(s, `$`, `\$`, -1)
+	s = strings.Replace(s, `"`, `\"`, -1)
+	s = strings.Replace(s, `'`, `\'`, -1)
+	s = strings.Replace(s, `!`, `\!`, -1)
+	s = strings.Replace(s, `#`, `\#`, -1)
+	s = strings.Replace(s, `%`, `\%`, -1)
+	s = strings.Replace(s, "\t", `\t`, -1)
+	s = strings.Replace(s, "`", "\\`", -1)
+	return s
+}
+
+func condenseBash(cmd string) string {
+	cmd = strings.TrimSpace(cmd)
+	lines := strings.Split(cmd, "\n")
+	res := []string{}
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		res = append(res, line)
+	}
+	return strings.Join(res, "; ")
+}
+
 // Initialize a new machine using docker-machine.
 // name: name of machine
-// repo: repository to pull from, e.g. github.com/tendermint/tendermint
-// head: git commit hash to make and run
+// tmrepo: tm repository to pull from, e.g. github.com/tendermint/tendermint
+// tmhead: git commit hash to make and run
+// apprepo: app repository to pull from, e.g. github.com/tendermint/tmsp
+// apphead: git commit hash to make and run
 // seeds: seed list
-func initMachine(name string, repo string, head string, seeds string) (info string, err error) {
+func initMachine(name string, tmrepo string, tmhead string, apprepo string, apphead string, seeds string) (info string, err error) {
 	// Initialize the tmdata container
 	args := []string{"ssh", name, "docker run --name tmdata --entrypoint /bin/echo tendermint/tmbase Data-only container for node"}
 	if !runProcess("init-tmdata-"+name, "docker-machine", args) {
 		return "", errors.New("Failed to init tmdata on machine " + name)
 	}
 
+	// Initialize the tmapp container
+	// XXX make this more general.
+	runScript := condenseBash(`
+mkdir -p $GOPATH/src/$REPO
+cd $GOPATH/src/$REPO
+git clone https://$REPO.git .
+git fetch
+git reset --hard $HEAD
+go get -d $REPO/cmd/counter
+go run cmd/counter/main.go --address="tcp://0.0.0.0:46658"
+`)
+	// XXX do not expose 46658 to the public.
+	args = []string{"ssh", name, Fmt(`docker run --name tmapp --volumes-from tmdata -d -p 46658:46658 `+
+		`-e REPO="%v" -e HEAD="%v" tendermint/tmbase /bin/bash -c "%v"`,
+		eB(apprepo), eB(apphead), eB(runScript))}
+	fmt.Println(args)
+	if !runProcess("init-tmapp-"+name, "docker-machine", args) {
+		return "", errors.New("Failed to init tmapp on machine " + name)
+	}
+
 	// Initialize the tmnode container
-	args = []string{"ssh", name, Fmt("docker run --name tmnode --volumes-from tmdata -d -p 46656:46656 -p 46657:46657 -e TMNAME=\"%v\" -e TMREPO=\"%v\" -e TMHEAD=\"%v\" -e TMSEEDS=\"%v\" tendermint/tmbase", name, repo, head, seeds)}
+	runScript = condenseBash(`
+mkdir -p $GOPATH/src/$TMREPO
+cd $GOPATH/src/$TMREPO
+git clone https://$TMREPO.git .
+git fetch
+git reset --hard $TMHEAD
+go get -d $TMREPO/cmd/tendermint
+make
+tendermint node --seeds="$TMSEEDS" --moniker="$TMNAME"
+`)
+	args = []string{"ssh", name, Fmt(`docker run --name tmnode --volumes-from tmdata -d -p 46656:46656 -p 46657:46657 `+
+		`-e TMNAME="%v" -e TMREPO="%v" -e TMHEAD="%v" -e TMSEEDS="%v" tendermint/tmbase /bin/bash -c "%v"`,
+		eB(name), eB(tmrepo), eB(tmhead), eB(seeds), eB(runScript))}
+	fmt.Println(args)
 	if !runProcess("init-tmnode-"+name, "docker-machine", args) {
 		return "", errors.New("Failed to init tmnode on machine " + name)
 	}
@@ -447,7 +513,7 @@ func copyToMachine(name string, srcPath string, dstPath string) error {
 func runProcess(label string, command string, args []string) bool {
 	outFile := NewBufferCloser(nil)
 	fmt.Println(Green(command), Green(args))
-	proc, err := pcm.Create(label, command, args, nil, outFile)
+	proc, err := pcm.StartProcess(label, command, args, nil, outFile)
 	if err != nil {
 		fmt.Println(Red(err.Error()))
 		return false
@@ -467,7 +533,7 @@ func runProcess(label string, command string, args []string) bool {
 func runProcessGetResult(label string, command string, args []string) (string, bool) {
 	outFile := NewBufferCloser(nil)
 	fmt.Println(Green(command), Green(args))
-	proc, err := pcm.Create(label, command, args, nil, outFile)
+	proc, err := pcm.StartProcess(label, command, args, nil, outFile)
 	if err != nil {
 		return "", false
 	}
@@ -485,12 +551,12 @@ func runProcessGetResult(label string, command string, args []string) (string, b
 
 //--------------------------------------------------------------------------------
 
-type nodeInfo struct {
-	name   string
-	pubKey acm.PubKeyEd25519
+type MachineInfo struct {
+	Name   string
+	PubKey crypto.PubKeyEd25519
 }
 
-func readPubKeyEd25519(str string) (pubKey acm.PubKeyEd25519, err error) {
+func readPubKeyEd25519(str string) (pubKey crypto.PubKeyEd25519, err error) {
 	wire.ReadJSONPtr(&pubKey, []byte(str), &err)
 	return
 }
