@@ -76,6 +76,11 @@ func main() {
 			Name:  "copy-genesis",
 			Usage: "Copy genesis file to all nodes",
 			Flags: []cli.Flag{
+				cli.IntFlag{
+					Name:  "nodes",
+					Value: 4,
+					Usage: "number of nodes",
+				},
 				cli.StringFlag{
 					Name:  "prefix",
 					Value: "testnode",
