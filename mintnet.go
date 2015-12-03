@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,25 @@ func main() {
 	app.Name = "mintnet"
 	app.Usage = "mintnet [command] [args...]"
 	app.Commands = []cli.Command{
+		{
+			Name:  "init",
+			Usage: "Initialize node configuration directories",
+			Flags: []cli.Flag{
+				cli.IntFlag{
+					Name:  "nodes",
+					Value: 4,
+					Usage: "number of nodes",
+				},
+				cli.StringFlag{
+					Name:  "prefix",
+					Value: "node",
+					Usage: "node name prefix",
+				},
+			},
+			Action: func(c *cli.Context) {
+				cmdInit(c)
+			},
+		},
 		{
 			Name:  "create",
 			Usage: "Create a new Tendermint network with newly provisioned machines",
@@ -116,6 +136,110 @@ func main() {
 }
 
 //--------------------------------------------------------------------------------
+
+// Initialize directories for each node
+func cmdInit(c *cli.Context) {
+	args := c.Args()
+	base := ""
+	if len(args) > 0 {
+		base = args[0]
+	}
+	nodes := c.Int("nodes")
+	prefix := c.String("prefix")
+
+	err := initAppDirectory(base)
+	if err != nil {
+		Exit(err.Error())
+	}
+
+	genVals := make([]types.GenesisValidator, nodes)
+
+	// Initialize core dir and priv_validator.json's
+	for i := 0; i < nodes; i++ {
+		name := Fmt("%v-%v", prefix, i)
+		err := initCoreDirectory(base, name)
+		if err != nil {
+			Exit(err.Error())
+		}
+		// Read priv_validator.json to populate genVals
+		privValFile := path.Join(base, name, "core", "priv_validator.json")
+		privVal := types.LoadPrivValidator(privValFile)
+		genVals[i] = types.GenesisValidator{
+			PubKey: privVal.PubKey,
+			Amount: 1,
+			Name:   name,
+		}
+	}
+
+	// Generate genesis doc from generated validators
+	genDoc := &types.GenesisDoc{
+		GenesisTime: time.Now(),
+		ChainID:     "chain-" + RandStr(6),
+		Validators:  genVals,
+		AppHash:     nil,
+	}
+
+	// Write genesis file.
+	for i := 0; i < nodes; i++ {
+		name := Fmt("%v-%v", prefix, i)
+		genDoc.SaveAs(path.Join(base, name, "genesis.json"))
+	}
+
+}
+
+func initCoreDirectory(base, name string) error {
+	dir := path.Join(base, name, "core")
+	err := EnsureDir(dir)
+	if err != nil {
+		return err
+	}
+
+	// Create priv_validator.json file if not present
+	ensurePrivValidator(path.Join(dir, "priv_validator.json"))
+	return nil
+
+}
+
+func ensurePrivValidator(file string) {
+	if FileExists(file) {
+		return
+	}
+	privValidator := types.GenPrivValidator()
+	privValidator.SetFile(file)
+	privValidator.Save()
+}
+
+func initAppDirectory(base string) error {
+	dir := path.Join(base, "app")
+	err := EnsureDir(dir)
+	if err != nil {
+		return err
+	}
+
+	// Write a silly sample bash script.
+	scriptBytes := []byte(`#! /bin/bash
+# This is a sample bash script for a TMSP application
+# The source code for this sample application is XXX
+# Edit this script before "mintnet deploy" to change
+# the application being run.
+# NOTE: This script is tailored for a Go-based project.
+# Want other languages?  Let us know!  support@tendermint.com
+
+REPO =    "github.com/tendermint/tmsp"
+HEAD =    "origin/master"
+CMD  =    "counter"
+
+mkdir -p $GOPATH/src/$REPO
+cd $GOPATH/src/$REPO
+git clone https://$REPO.git .
+git fetch
+git reset --hard $HEAD
+go get -d $REPO/cmd/$CMD
+CMD --address="tcp://0.0.0.0:46658"`)
+
+	err = WriteFile(path.Join(dir, "init.sh"), scriptBytes)
+	return err
+}
 
 // Create a new Tendermint network with newly provisioned machines
 func cmdCreate(c *cli.Context) {
