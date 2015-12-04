@@ -127,7 +127,7 @@ func cmdInit(c *cli.Context) {
 
 	// Write genesis file.
 	for _, mach := range machines {
-		genDoc.SaveAs(path.Join(base, mach, "genesis.json"))
+		genDoc.SaveAs(path.Join(base, mach, "core", "genesis.json"))
 	}
 
 	fmt.Println(Fmt("Successfully initialized %v node directories", len(machines)))
@@ -135,7 +135,7 @@ func cmdInit(c *cli.Context) {
 
 func initCoreDirectory(base, mach string) error {
 	dir := path.Join(base, mach, "core")
-	err := EnsureDir(dir)
+	err := EnsureDir(dir, 0777)
 	if err != nil {
 		return err
 	}
@@ -157,7 +157,7 @@ func ensurePrivValidator(file string) {
 
 func initAppDirectory(base string) error {
 	dir := path.Join(base, "app")
-	err := EnsureDir(dir)
+	err := EnsureDir(dir, 0777)
 	if err != nil {
 		return err
 	}
@@ -171,9 +171,9 @@ func initAppDirectory(base string) error {
 # NOTE: This script is tailored for a Go-based project.
 # Want other languages?  Let us know!  support@tendermint.com
 
-REPO =    "github.com/tendermint/tmsp"
-HEAD =    "origin/master"
-CMD  =    "counter"
+REPO="github.com/tendermint/tmsp"
+HEAD="origin/master"
+CMD="counter"
 
 mkdir -p $GOPATH/src/$REPO
 cd $GOPATH/src/$REPO
@@ -181,9 +181,9 @@ git clone https://$REPO.git .
 git fetch
 git reset --hard $HEAD
 go get -d $REPO/cmd/$CMD
-CMD --address="tcp://0.0.0.0:46658"`)
+$CMD --address="tcp://0.0.0.0:46658"`)
 
-	err = WriteFile(path.Join(dir, "init.sh"), scriptBytes)
+	err = WriteFile(path.Join(dir, "init.sh"), scriptBytes, 0777)
 	return err
 }
 
@@ -205,13 +205,13 @@ func provisionMachines(machines []string, args []string) (errs []error) {
 	var wg sync.WaitGroup
 	for _, mach := range machines {
 		wg.Add(1)
-		go func() {
+		go func(mach string) {
 			defer wg.Done()
 			err := provisionMachine(args, mach)
 			if err != nil {
 				errs = append(errs, err)
 			}
-		}()
+		}(mach)
 	}
 	wg.Wait()
 	return errs
@@ -343,7 +343,7 @@ func startTMApp(mach, app string) error {
 func startTMNode(mach, app string, seeds []string) error {
 	tmrepo := "github.com/tendermint/tendermint"
 	tmhead := "origin/mintdb"
-	runScript := condenseBash(`
+	runScript := condenseBash(Fmt(`
 mkdir -p $GOPATH/src/$TMREPO
 cd $GOPATH/src/$TMREPO
 git clone https://$TMREPO.git .
@@ -351,11 +351,11 @@ git fetch
 git reset --hard $TMHEAD
 go get -d $TMREPO/cmd/tendermint
 make
-tendermint node --seeds="$TMSEEDS" --moniker="$TMNAME"
-`)
+tendermint node --seeds="$TMSEEDS" --moniker="$TMNAME" --proxy_app="tcp://%v_tmapp:46658"
+`, app))
 	args := []string{"ssh", mach, Fmt(`docker run --name %v_tmnode --volumes-from %v_tmdata -d --link %v_tmapp -p 46656:46656 -p 46657:46657 `+
-		`-e TMNAME="%v" -e TMREPO="%v" -e TMHEAD="%v" -e TMSEEDS="%v" tendermint/tmbase /bin/bash -c "%v"`,
-		app, app, app, eB(mach), eB(tmrepo), eB(tmhead), eB(strings.Join(seeds, ",")), eB(runScript))}
+		`-e TMNAME="%v" -e TMREPO="%v" -e TMHEAD="%v" -e TMSEEDS="%v" -e TMROOT="%v" tendermint/tmbase /bin/bash -c "%v"`,
+		app, app, app, eB(mach), eB(tmrepo), eB(tmhead), eB(strings.Join(seeds, ",")), "/data/tendermint/core", eB(runScript))}
 	fmt.Println(args)
 	if !runProcess("init-tmnode-"+mach, "docker-machine", args) {
 		return errors.New("Failed to init tmnode on machine " + mach)
@@ -452,6 +452,12 @@ func copyToMachine(mach string, app string, srcPath string, dstPath string) erro
 	args = []string{"ssh", mach, Fmt("docker cp %v %v_tmdata:%v", tempFile, app, dstPath)}
 	if !runProcess("docker-cp-file-"+mach, "docker-machine", args) {
 		return errors.New("Failed to docker-cp file to container in machine " + mach)
+	}
+
+	// Next, change the ownership of the file to tmuser
+	args = []string{"ssh", mach, Fmt(`docker run --volumes-from %v_tmdata -u root tendermint/tmbase chown -R tmuser:tmuser %v`, app, dstPath)}
+	if !runProcess("docker-chmod-file-"+mach, "docker-machine", args) {
+		return errors.New("Failed to docker-run(chmod) file in machine " + mach)
 	}
 
 	// TODO: remove tempFile
