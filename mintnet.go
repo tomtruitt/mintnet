@@ -78,6 +78,34 @@ func main() {
 				cmdStart(c)
 			},
 		},
+		{
+			Name:  "stop",
+			Usage: "Stop blockchain application",
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:  "machines",
+					Value: "mach1,mach2,mach3,mach4",
+					Usage: "Comma separated list of machine names",
+				},
+			},
+			Action: func(c *cli.Context) {
+				cmdStop(c)
+			},
+		},
+		{
+			Name:  "rm",
+			Usage: "Remove blockchain application",
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:  "machines",
+					Value: "mach1,mach2,mach3,mach4",
+					Usage: "Comma separated list of machine names",
+				},
+			},
+			Action: func(c *cli.Context) {
+				cmdRm(c)
+			},
+		},
 	}
 	app.Run(os.Args)
 
@@ -171,17 +199,8 @@ func initAppDirectory(base string) error {
 # NOTE: This script is tailored for a Go-based project.
 # Want other languages?  Let us know!  support@tendermint.com
 
-REPO="github.com/tendermint/tmsp"
-HEAD="origin/master"
-CMD="counter"
-
-mkdir -p $GOPATH/src/$REPO
-cd $GOPATH/src/$REPO
-git clone https://$REPO.git .
-git fetch
-git reset --hard $HEAD
-go get -d $REPO/cmd/$CMD
-$CMD --address="tcp://0.0.0.0:46658"`)
+go get github.com/tendermint/tmsp/cmd/counter
+counter --address="tcp://0.0.0.0:46658"`)
 
 	err = WriteFile(path.Join(dir, "init.sh"), scriptBytes, 0777)
 	return err
@@ -312,8 +331,8 @@ func listMachinesFromBase(base string) ([]string, error) {
 
 func startTMData(mach, app string) error {
 	args := []string{"ssh", mach, Fmt(`docker run --name %v_tmdata --entrypoint /bin/echo tendermint/tmbase`, app)}
-	if !runProcess("init-tmdata-"+mach, "docker-machine", args) {
-		return errors.New("Failed to init tmdata on machine " + mach)
+	if !runProcess("start-tmdata-"+mach, "docker-machine", args) {
+		return errors.New("Failed to start tmdata on machine " + mach)
 	}
 	return nil
 }
@@ -333,16 +352,15 @@ func copyNodeDir(mach, app, base string) error {
 func startTMApp(mach, app string) error {
 	args := []string{"ssh", mach, Fmt(`docker run --name %v_tmapp --volumes-from %v_tmdata -d `+
 		`tendermint/tmbase /data/tendermint/app/init.sh`, app, app)}
-	fmt.Println(args)
-	if !runProcess("init-tmapp-"+mach, "docker-machine", args) {
-		return errors.New("Failed to init tmapp on machine " + mach)
+	if !runProcess("start-tmapp-"+mach, "docker-machine", args) {
+		return errors.New("Failed to start tmapp on machine " + mach)
 	}
 	return nil
 }
 
 func startTMNode(mach, app string, seeds []string) error {
 	tmrepo := "github.com/tendermint/tendermint"
-	tmhead := "origin/mintdb"
+	tmhead := "origin/develop"
 	runScript := condenseBash(Fmt(`
 mkdir -p $GOPATH/src/$TMREPO
 cd $GOPATH/src/$TMREPO
@@ -356,9 +374,8 @@ tendermint node --seeds="$TMSEEDS" --moniker="$TMNAME" --proxy_app="tcp://%v_tma
 	args := []string{"ssh", mach, Fmt(`docker run --name %v_tmnode --volumes-from %v_tmdata -d --link %v_tmapp -p 46656:46656 -p 46657:46657 `+
 		`-e TMNAME="%v" -e TMREPO="%v" -e TMHEAD="%v" -e TMSEEDS="%v" -e TMROOT="%v" tendermint/tmbase /bin/bash -c "%v"`,
 		app, app, app, eB(mach), eB(tmrepo), eB(tmhead), eB(strings.Join(seeds, ",")), "/data/tendermint/core", eB(runScript))}
-	fmt.Println(args)
-	if !runProcess("init-tmnode-"+mach, "docker-machine", args) {
-		return errors.New("Failed to init tmnode on machine " + mach)
+	if !runProcess("start-tmnode-"+mach, "docker-machine", args) {
+		return errors.New("Failed to start tmnode on machine " + mach)
 	}
 
 	// Give it some time to install and make repo.
@@ -380,6 +397,93 @@ tendermint node --seeds="$TMSEEDS" --moniker="$TMNAME" --proxy_app="tcp://%v_tma
 		}
 	}
 
+}
+
+//--------------------------------------------------------------------------------
+
+func cmdStop(c *cli.Context) {
+	args := c.Args()
+	if len(args) == 0 {
+		Exit("stop requires argument for app name")
+	}
+	app := args[0]
+	machines := strings.Split(c.String("machines"), ",")
+
+	// Initialize TMData, TMApp, and TMNode container on each machine
+	var wg sync.WaitGroup
+	for _, mach := range machines {
+		wg.Add(1)
+		go func(mach string) {
+			defer wg.Done()
+			stopTMNode(mach, app)
+			stopTMApp(mach, app)
+		}(mach)
+	}
+	wg.Wait()
+}
+
+func stopTMNode(mach, app string) error {
+	args := []string{"ssh", mach, Fmt(`docker stop %v_tmnode`, app)}
+	if !runProcess("stop-tmnode-"+mach, "docker-machine", args) {
+		return errors.New("Failed to stop tmnode on machine " + mach)
+	}
+	return nil
+}
+
+func stopTMApp(mach, app string) error {
+	args := []string{"ssh", mach, Fmt(`docker stop %v_tmapp`, app)}
+	if !runProcess("stop-tmapp-"+mach, "docker-machine", args) {
+		return errors.New("Failed to stop tmapp on machine " + mach)
+	}
+	return nil
+}
+
+//--------------------------------------------------------------------------------
+
+func cmdRm(c *cli.Context) {
+	args := c.Args()
+	if len(args) == 0 {
+		Exit("rm requires argument for app name")
+	}
+	app := args[0]
+	machines := strings.Split(c.String("machines"), ",")
+
+	// Initialize TMData, TMApp, and TMNode container on each machine
+	var wg sync.WaitGroup
+	for _, mach := range machines {
+		wg.Add(1)
+		go func(mach string) {
+			defer wg.Done()
+			rmTMData(mach, app)
+			rmTMApp(mach, app)
+			rmTMNode(mach, app)
+		}(mach)
+	}
+	wg.Wait()
+}
+
+func rmTMData(mach, app string) error {
+	args := []string{"ssh", mach, Fmt(`docker rm %v_tmdata`, app)}
+	if !runProcess("rm-tmdata-"+mach, "docker-machine", args) {
+		return errors.New("Failed to rm tmdata on machine " + mach)
+	}
+	return nil
+}
+
+func rmTMApp(mach, app string) error {
+	args := []string{"ssh", mach, Fmt(`docker rm %v_tmapp`, app)}
+	if !runProcess("rm-tmapp-"+mach, "docker-machine", args) {
+		return errors.New("Failed to rm tmapp on machine " + mach)
+	}
+	return nil
+}
+
+func rmTMNode(mach, app string) error {
+	args := []string{"ssh", mach, Fmt(`docker rm %v_tmnode`, app)}
+	if !runProcess("rm-tmnode-"+mach, "docker-machine", args) {
+		return errors.New("Failed to rm tmnode on machine " + mach)
+	}
+	return nil
 }
 
 //--------------------------------------------------------------------------------
