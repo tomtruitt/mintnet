@@ -200,7 +200,7 @@ func initAppDirectory(base string) error {
 # Want other languages?  Let us know!  support@tendermint.com
 
 go get github.com/tendermint/tmsp/cmd/counter
-counter --address="tcp://0.0.0.0:46658"`)
+counter --serial`)
 
 	err = WriteFile(path.Join(dir, "init.sh"), scriptBytes, 0777)
 	return err
