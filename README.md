@@ -1,22 +1,50 @@
 First, install `docker-machine` and get a DigitalOcean account and access token.
 
-To create a testnet on DigitalOcean:
+Then, install `mintnet`.
 
 ```
-go run mintnet.go create --nodes 4 --gen-file-out=genesis.json -- --driver=digitalocean --digitalocean-access-token=YOUR_ACCCESS_TOKEN
+go get github.com/tendermint/mintnet
 ```
 
-This generates a bare genesis.json file with no accounts.  Update it manually.
-When you're done, copy the genesis.json to the testnet nodes.
+To provision machines on DigitalOcean:
 
 ```
-go run mintnet.go copy-genesis --nodes 4 --gen-file=genesis.json
+mintnet create -- --driver=digitalocean --digitalocean-access-token=YOUR_ACCCESS_TOKEN
 ```
 
-If everything went well, your testnet should start generating blocks.
+By default this creates 4 new machines.  Check the help messages for more info, e.g. `mintnet create --help`.
 
-Remember to destroy the testnet when you're done.
+Next, create the testnet configuration folders.
 
 ```
-go run mintnet.go destroy
+mintnet init mytest_dir/
+```
+
+This creates directories in `mytest` for the application.
+
+```
+ls mytest_dir/
+  app   # Common configuration directory for your blockchain applicaiton
+  mach1 # Configuration directory for the Tendermint core daemon on machine 1
+  mach2 # Configuration directory for the Tendermint core daemon on machine 2
+  mach3 # Configuration directory for the Tendermint core daemon on machine 3
+  mach4 # Configuration directory for the Tendermint core daemon on machine 4
+```
+
+Now start the testnet service.
+
+```
+mintnet start mytest mytest_dir/
+```
+
+You can stop and remove the application as well.
+
+```
+mintnet stop mytest; mintnet rm mytest
+```
+
+Don't forget to destroy your provisioned machines!
+
+```
+mintnet destroy --machines="mach1,mach2,mach3,mach4"
 ```
