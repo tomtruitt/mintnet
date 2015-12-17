@@ -23,8 +23,9 @@ func main() {
 	app.Usage = "mintnet [command] [args...]"
 	app.Commands = []cli.Command{
 		{
-			Name:  "init",
-			Usage: "Initialize node configuration directories",
+			Name:      "init",
+			Usage:     "Initialize node configuration directories",
+			ArgsUsage: "[baseDir]",
 			Flags: []cli.Flag{
 				cli.StringFlag{
 					Name:  "machines",
@@ -37,8 +38,9 @@ func main() {
 			},
 		},
 		{
-			Name:  "create",
-			Usage: "Create a new Tendermint network with newly provisioned machines",
+			Name:      "create",
+			Usage:     "Create a new Tendermint network with newly provisioned machines",
+			ArgsUsage: "",
 			Flags: []cli.Flag{
 				cli.StringFlag{
 					Name:  "machines",
@@ -51,8 +53,9 @@ func main() {
 			},
 		},
 		{
-			Name:  "destroy",
-			Usage: "Destroy a Tendermint network",
+			Name:      "destroy",
+			Usage:     "Destroy a Tendermint network",
+			ArgsUsage: "",
 			Flags: []cli.Flag{
 				cli.StringFlag{
 					Name:  "machines",
@@ -65,22 +68,17 @@ func main() {
 			},
 		},
 		{
-			Name:  "start",
-			Usage: "Start blockchain application",
-			Flags: []cli.Flag{
-				cli.StringFlag{
-					Name:  "app",
-					Value: "testapp",
-					Usage: "Application name",
-				},
-			},
+			Name:      "start",
+			Usage:     "Start blockchain application",
+			ArgsUsage: "[appName] [baseDir]",
 			Action: func(c *cli.Context) {
 				cmdStart(c)
 			},
 		},
 		{
-			Name:  "stop",
-			Usage: "Stop blockchain application",
+			Name:      "stop",
+			Usage:     "Stop blockchain application",
+			ArgsUsage: "[appName]",
 			Flags: []cli.Flag{
 				cli.StringFlag{
 					Name:  "machines",
@@ -116,10 +114,11 @@ func main() {
 // Initialize directories for each node
 func cmdInit(c *cli.Context) {
 	args := c.Args()
-	base := ""
-	if len(args) > 0 {
-		base = args[0]
+	if len(args) != 1 {
+		cli.ShowAppHelp(c)
+		return
 	}
+	base := args[0]
 	machines := strings.Split(c.String("machines"), ",")
 
 	err := initAppDirectory(base)
@@ -276,11 +275,12 @@ func cmdDestroy(c *cli.Context) {
 
 func cmdStart(c *cli.Context) {
 	args := c.Args()
-	base := ""
-	if len(args) > 0 {
-		base = args[0]
+	if len(args) != 2 {
+		cli.ShowAppHelp(c)
+		return
 	}
-	app := c.String("app") // app name (prefix)
+	app := args[0]
+	base := args[1]
 	machines, err := listMachinesFromBase(base)
 	if err != nil {
 		Exit(err.Error())
