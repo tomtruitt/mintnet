@@ -71,6 +71,13 @@ func main() {
 			Name:      "start",
 			Usage:     "Start blockchain application",
 			ArgsUsage: "[appName] [baseDir]",
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:  "tmhead",
+					Value: "origin/master",
+					Usage: "Tendermint Core repository head to check out",
+				},
+			},
 			Action: func(c *cli.Context) {
 				cmdStart(c)
 			},
@@ -285,6 +292,7 @@ func cmdStart(c *cli.Context) {
 	if err != nil {
 		Exit(err.Error())
 	}
+	tmhead := c.String("tmhead")
 
 	// Get machine ips
 	seeds := make([]string, len(machines))
@@ -305,7 +313,7 @@ func cmdStart(c *cli.Context) {
 			startTMData(mach, app)
 			copyNodeDir(mach, app, base)
 			startTMApp(mach, app)
-			startTMNode(mach, app, seeds)
+			startTMNode(mach, tmhead, app, seeds)
 		}(mach)
 	}
 	wg.Wait()
@@ -358,9 +366,8 @@ func startTMApp(mach, app string) error {
 	return nil
 }
 
-func startTMNode(mach, app string, seeds []string) error {
+func startTMNode(mach, tmhead string, app string, seeds []string) error {
 	tmrepo := "github.com/tendermint/tendermint"
-	tmhead := "origin/develop"
 	runScript := condenseBash(Fmt(`
 mkdir -p $GOPATH/src/$TMREPO
 cd $GOPATH/src/$TMREPO
