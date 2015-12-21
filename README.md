@@ -1,4 +1,4 @@
-First, install `docker-machine` and get a DigitalOcean account and access token.
+First, install [`docker-machine`](https://docs.docker.com/machine/install-machine/) and get a DigitalOcean account and access token.
 
 Then, install `mintnet`.
 
