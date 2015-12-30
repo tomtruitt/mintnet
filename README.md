@@ -26,7 +26,7 @@ Next, create the testnet configuration folders.
 mintnet init mytest_dir/
 ```
 
-This creates directories in `mytest` for the application.
+This creates directories in `mytest_dir` for the application.
 
 ```
 ls mytest_dir/
