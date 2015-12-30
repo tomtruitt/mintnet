@@ -17,6 +17,38 @@ import (
 	"github.com/codegangsta/cli"
 )
 
+var (
+	machFlag = cli.StringFlag{
+		Name:  "machines",
+		Value: "mach1,mach2,mach3,mach4",
+		Usage: "Comma separated list of machine names",
+	}
+
+	logFlag = cli.StringFlag{
+		Name:  "log",
+		Value: "notice",
+		Usage: "Set the log level for the tendermint containers",
+	}
+
+	headFlag = cli.StringFlag{
+		Name:  "tmhead",
+		Value: "origin/master",
+		Usage: "Tendermint Core repository head to check out",
+	}
+
+	repoFlag = cli.StringFlag{
+		Name:  "tmrepo",
+		Value: "github.com/tendermint/tendermint",
+		Usage: "Tendermint fork to clone",
+	}
+
+	seedsFlag = cli.StringFlag{
+		Name:  "seeds",
+		Value: "",
+		Usage: "Specify comma-separated seeds to dial on node startup",
+	}
+)
+
 func main() {
 	app := cli.NewApp()
 	app.Name = "mintnet"
@@ -27,11 +59,7 @@ func main() {
 			Usage:     "Initialize node configuration directories",
 			ArgsUsage: "[baseDir]",
 			Flags: []cli.Flag{
-				cli.StringFlag{
-					Name:  "machines",
-					Value: "mach1,mach2,mach3,mach4",
-					Usage: "Comma separated list of machine names",
-				},
+				machFlag,
 			},
 			Action: func(c *cli.Context) {
 				cmdInit(c)
@@ -39,14 +67,10 @@ func main() {
 		},
 		{
 			Name:      "create",
-			Usage:     "Create a new Tendermint network with newly provisioned machines",
+			Usage:     "Create a new Tendermint network with newly provisioned machines. Use -- to pass args through to docker-machine",
 			ArgsUsage: "",
 			Flags: []cli.Flag{
-				cli.StringFlag{
-					Name:  "machines",
-					Value: "mach1,mach2,mach3,mach4",
-					Usage: "Comma separated list of machine names",
-				},
+				machFlag,
 			},
 			Action: func(c *cli.Context) {
 				cmdCreate(c)
@@ -57,11 +81,7 @@ func main() {
 			Usage:     "Destroy a Tendermint network",
 			ArgsUsage: "",
 			Flags: []cli.Flag{
-				cli.StringFlag{
-					Name:  "machines",
-					Value: "mach1,mach2,mach3,mach4",
-					Usage: "Comma separated list of machine names",
-				},
+				machFlag,
 			},
 			Action: func(c *cli.Context) {
 				cmdDestroy(c)
@@ -72,11 +92,11 @@ func main() {
 			Usage:     "Start blockchain application",
 			ArgsUsage: "[appName] [baseDir]",
 			Flags: []cli.Flag{
-				cli.StringFlag{
-					Name:  "tmhead",
-					Value: "origin/master",
-					Usage: "Tendermint Core repository head to check out",
-				},
+				headFlag,
+				repoFlag,
+				seedsFlag,
+				machFlag,
+				logFlag,
 			},
 			Action: func(c *cli.Context) {
 				cmdStart(c)
@@ -87,11 +107,7 @@ func main() {
 			Usage:     "Stop blockchain application",
 			ArgsUsage: "[appName]",
 			Flags: []cli.Flag{
-				cli.StringFlag{
-					Name:  "machines",
-					Value: "mach1,mach2,mach3,mach4",
-					Usage: "Comma separated list of machine names",
-				},
+				machFlag,
 			},
 			Action: func(c *cli.Context) {
 				cmdStop(c)
@@ -101,14 +117,21 @@ func main() {
 			Name:  "rm",
 			Usage: "Remove blockchain application",
 			Flags: []cli.Flag{
-				cli.StringFlag{
-					Name:  "machines",
-					Value: "mach1,mach2,mach3,mach4",
-					Usage: "Comma separated list of machine names",
-				},
+				machFlag,
 			},
 			Action: func(c *cli.Context) {
 				cmdRm(c)
+			},
+		},
+		{
+			Name:      "exec",
+			Usage:     "Execute a shell command on all machines",
+			ArgsUsage: "[baseDir]",
+			Flags: []cli.Flag{
+				machFlag,
+			},
+			Action: func(c *cli.Context) {
+				cmdExec(c)
 			},
 		},
 	}
@@ -288,11 +311,18 @@ func cmdStart(c *cli.Context) {
 	}
 	app := args[0]
 	base := args[1]
-	machines, err := listMachinesFromBase(base)
-	if err != nil {
-		Exit(err.Error())
+	var machines []string
+	if c.IsSet("machines") {
+		machines = strings.Split(c.String("machines"), ",")
+	} else {
+		var err error
+		machines, err = listMachinesFromBase(base)
+		if err != nil {
+			Exit(err.Error())
+		}
 	}
 	tmhead := c.String("tmhead")
+	tmrepo := c.String("tmrepo")
 
 	// Get machine ips
 	seeds := make([]string, len(machines))
@@ -304,6 +334,14 @@ func cmdStart(c *cli.Context) {
 		seeds[i] = ip + ":46656"
 	}
 
+	// useful if we are restarting a single node
+	if c.IsSet("seeds") {
+		moreSeeds := strings.Split(c.String("seeds"), ",")
+		seeds = append(seeds, moreSeeds...)
+	}
+
+	logLevel := c.String("log")
+
 	// Initialize TMData, TMApp, and TMNode container on each machine
 	var wg sync.WaitGroup
 	for _, mach := range machines {
@@ -313,7 +351,7 @@ func cmdStart(c *cli.Context) {
 			startTMData(mach, app)
 			copyNodeDir(mach, app, base)
 			startTMApp(mach, app)
-			startTMNode(mach, tmhead, app, seeds)
+			startTMNode(mach, tmhead, tmrepo, app, seeds, logLevel)
 		}(mach)
 	}
 	wg.Wait()
@@ -366,8 +404,7 @@ func startTMApp(mach, app string) error {
 	return nil
 }
 
-func startTMNode(mach, tmhead string, app string, seeds []string) error {
-	tmrepo := "github.com/tendermint/tendermint"
+func startTMNode(mach, tmhead, tmrepo string, app string, seeds []string, log string) error {
 	runScript := condenseBash(Fmt(`
 mkdir -p $GOPATH/src/$TMREPO
 cd $GOPATH/src/$TMREPO
@@ -376,8 +413,8 @@ git fetch
 git reset --hard $TMHEAD
 go get -d $TMREPO/cmd/tendermint
 make
-tendermint node --seeds="$TMSEEDS" --moniker="$TMNAME" --proxy_app="tcp://%v_tmapp:46658"
-`, app))
+tendermint node --seeds="$TMSEEDS" --moniker="$TMNAME" --proxy_app="tcp://%v_tmapp:46658" --log_level="%v"
+`, app, log))
 	args := []string{"ssh", mach, Fmt(`docker run --name %v_tmnode --volumes-from %v_tmdata -d --link %v_tmapp -p 46656:46656 -p 46657:46657 `+
 		`-e TMNAME="%v" -e TMREPO="%v" -e TMHEAD="%v" -e TMSEEDS="%v" -e TMROOT="%v" tendermint/tmbase /bin/bash -c "%v"`,
 		app, app, app, eB(mach), eB(tmrepo), eB(tmhead), eB(strings.Join(seeds, ",")), "/data/tendermint/core", eB(runScript))}
@@ -455,7 +492,7 @@ func cmdRm(c *cli.Context) {
 	app := args[0]
 	machines := strings.Split(c.String("machines"), ",")
 
-	// Initialize TMData, TMApp, and TMNode container on each machine
+	// Remove TMData, TMApp, and TMNode container on each machine
 	var wg sync.WaitGroup
 	for _, mach := range machines {
 		wg.Add(1)
@@ -470,7 +507,11 @@ func cmdRm(c *cli.Context) {
 }
 
 func rmTMData(mach, app string) error {
-	args := []string{"ssh", mach, Fmt(`docker rm %v_tmdata`, app)}
+	// XXX: "-vf" is clutch for dev. without v, volumes build up on disk. f forces it to stop and rm quickly
+	// would be great if we had flags that pass through mintnet to docker
+	// but this is somewhat complicated by fact we are managing three or four containers with one command
+	// so I advocate for adding these in now and addressing them later as we move towards production
+	args := []string{"ssh", mach, Fmt(`docker rm -vf %v_tmdata`, app)}
 	if !runProcess("rm-tmdata-"+mach, "docker-machine", args) {
 		return errors.New("Failed to rm tmdata on machine " + mach)
 	}
@@ -478,7 +519,7 @@ func rmTMData(mach, app string) error {
 }
 
 func rmTMApp(mach, app string) error {
-	args := []string{"ssh", mach, Fmt(`docker rm %v_tmapp`, app)}
+	args := []string{"ssh", mach, Fmt(`docker rm -vf %v_tmapp`, app)}
 	if !runProcess("rm-tmapp-"+mach, "docker-machine", args) {
 		return errors.New("Failed to rm tmapp on machine " + mach)
 	}
@@ -486,9 +527,38 @@ func rmTMApp(mach, app string) error {
 }
 
 func rmTMNode(mach, app string) error {
-	args := []string{"ssh", mach, Fmt(`docker rm %v_tmnode`, app)}
+	args := []string{"ssh", mach, Fmt(`docker rm -vf %v_tmnode`, app)}
 	if !runProcess("rm-tmnode-"+mach, "docker-machine", args) {
 		return errors.New("Failed to rm tmnode on machine " + mach)
+	}
+	return nil
+}
+
+//--------------------------------------------------------------------------------
+
+func cmdExec(c *cli.Context) {
+	args := c.Args()
+	if len(args) == 0 {
+		Exit("exec requires an argument")
+	}
+	machines := strings.Split(c.String("machines"), ",")
+
+	// Initialize TMData, TMApp, and TMNode container on each machine
+	var wg sync.WaitGroup
+	for _, mach := range machines {
+		wg.Add(1)
+		go func(mach string) {
+			defer wg.Done()
+			execCmd(mach, args)
+		}(mach)
+	}
+	wg.Wait()
+}
+
+func execCmd(mach string, args []string) error {
+	args = []string{"ssh", mach, strings.Join(args, " ")}
+	if !runProcess("exec-cmd-"+mach, "docker-machine", args) {
+		return errors.New("Failed to exec command on machine " + mach)
 	}
 	return nil
 }
@@ -566,7 +636,7 @@ func copyToMachine(mach string, app string, srcPath string, dstPath string) erro
 	}
 
 	// Next, change the ownership of the file to tmuser
-	args = []string{"ssh", mach, Fmt(`docker run --volumes-from %v_tmdata -u root tendermint/tmbase chown -R tmuser:tmuser %v`, app, dstPath)}
+	args = []string{"ssh", mach, Fmt(`docker run --rm --volumes-from %v_tmdata -u root tendermint/tmbase chown -R tmuser:tmuser %v`, app, dstPath)}
 	if !runProcess("docker-chmod-file-"+mach, "docker-machine", args) {
 		return errors.New("Failed to docker-run(chmod) file in machine " + mach)
 	}
