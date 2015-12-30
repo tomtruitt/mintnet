@@ -29,7 +29,7 @@ func main() {
 			Flags: []cli.Flag{
 				cli.StringFlag{
 					Name:  "machines",
-					Value: "mach1,mach2,mach3,mach4",
+					Value: "mach[1-4]",
 					Usage: "Comma separated list of machine names",
 				},
 			},
@@ -44,7 +44,7 @@ func main() {
 			Flags: []cli.Flag{
 				cli.StringFlag{
 					Name:  "machines",
-					Value: "mach1,mach2,mach3,mach4",
+					Value: "mach[1-4]",
 					Usage: "Comma separated list of machine names",
 				},
 			},
@@ -59,7 +59,7 @@ func main() {
 			Flags: []cli.Flag{
 				cli.StringFlag{
 					Name:  "machines",
-					Value: "mach1,mach2,mach3,mach4",
+					Value: "mach[1-4]",
 					Usage: "Comma separated list of machine names",
 				},
 			},
@@ -89,7 +89,7 @@ func main() {
 			Flags: []cli.Flag{
 				cli.StringFlag{
 					Name:  "machines",
-					Value: "mach1,mach2,mach3,mach4",
+					Value: "mach[1-4]",
 					Usage: "Comma separated list of machine names",
 				},
 			},
@@ -103,7 +103,7 @@ func main() {
 			Flags: []cli.Flag{
 				cli.StringFlag{
 					Name:  "machines",
-					Value: "mach1,mach2,mach3,mach4",
+					Value: "mach[1-4]",
 					Usage: "Comma separated list of machine names",
 				},
 			},
@@ -126,7 +126,7 @@ func cmdInit(c *cli.Context) {
 		return
 	}
 	base := args[0]
-	machines := strings.Split(c.String("machines"), ",")
+	machines := ParseMachines(c.String("machines"))
 
 	err := initAppDirectory(base)
 	if err != nil {
@@ -216,7 +216,7 @@ counter --serial`)
 
 func cmdCreate(c *cli.Context) {
 	args := c.Args()
-	machines := strings.Split(c.String("machines"), ",")
+	machines := ParseMachines(c.String("machines"))
 
 	errs := provisionMachines(machines, args)
 	if len(errs) > 0 {
@@ -254,7 +254,7 @@ func provisionMachine(args []string, mach string) error {
 //--------------------------------------------------------------------------------
 
 func cmdDestroy(c *cli.Context) {
-	machines := strings.Split(c.String("machines"), ",")
+	machines := ParseMachines(c.String("machines"))
 
 	// Destroy each machine.
 	//var wg sync.WaitGroup
@@ -414,7 +414,7 @@ func cmdStop(c *cli.Context) {
 		Exit("stop requires argument for app name")
 	}
 	app := args[0]
-	machines := strings.Split(c.String("machines"), ",")
+	machines := ParseMachines(c.String("machines"))
 
 	// Initialize TMData, TMApp, and TMNode container on each machine
 	var wg sync.WaitGroup
@@ -453,7 +453,7 @@ func cmdRm(c *cli.Context) {
 		Exit("rm requires argument for app name")
 	}
 	app := args[0]
-	machines := strings.Split(c.String("machines"), ",")
+	machines := ParseMachines(c.String("machines"))
 
 	// Initialize TMData, TMApp, and TMNode container on each machine
 	var wg sync.WaitGroup
