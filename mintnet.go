@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path"
 	"strings"
@@ -72,6 +71,16 @@ func main() {
 			Usage:     "Start blockchain application",
 			ArgsUsage: "[appName] [baseDir]",
 			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:  "machines",
+					Value: "mach[1-4]",
+					Usage: "Comma separated list of machine names",
+				},
+				cli.StringFlag{
+					Name:  "seed-machines",
+					Value: "",
+					Usage: "Comma separated list of machine names for seed, defaults to --machines",
+				},
 				cli.StringFlag{
 					Name:  "tmhead",
 					Value: "origin/master",
@@ -288,15 +297,16 @@ func cmdStart(c *cli.Context) {
 	}
 	app := args[0]
 	base := args[1]
-	machines, err := listMachinesFromBase(base)
-	if err != nil {
-		Exit(err.Error())
+	machines := ParseMachines(c.String("machines"))
+	seedMachines := ParseMachines(c.String("seed-machines"))
+	if len(seedMachines) == 0 {
+		seedMachines = machines
 	}
 	tmhead := c.String("tmhead")
 
 	// Get machine ips
-	seeds := make([]string, len(machines))
-	for i, mach := range machines {
+	seeds := make([]string, len(seedMachines))
+	for i, mach := range seedMachines {
 		ip, err := getMachineIP(mach)
 		if err != nil {
 			Exit(err.Error())
@@ -319,6 +329,7 @@ func cmdStart(c *cli.Context) {
 	wg.Wait()
 }
 
+/*
 func listMachinesFromBase(base string) ([]string, error) {
 	files, err := ioutil.ReadDir(base)
 	if err != nil {
@@ -336,6 +347,7 @@ func listMachinesFromBase(base string) ([]string, error) {
 	}
 	return machines, nil
 }
+*/
 
 func startTMData(mach, app string) error {
 	args := []string{"ssh", mach, Fmt(`docker run --name %v_tmdata --entrypoint /bin/echo tendermint/tmbase`, app)}
@@ -579,7 +591,6 @@ func copyToMachine(mach string, app string, srcPath string, dstPath string) erro
 
 func runProcess(label string, command string, args []string) bool {
 	outFile := NewBufferCloser(nil)
-	fmt.Println(Green(command), Green(args))
 	proc, err := pcm.StartProcess(label, command, args, nil, outFile)
 	if err != nil {
 		fmt.Println(Red(err.Error()))
@@ -587,6 +598,7 @@ func runProcess(label string, command string, args []string) bool {
 	}
 
 	<-proc.WaitCh
+	fmt.Println(Green(command), Green(args))
 	if proc.ExitState.Success() {
 		fmt.Println(Blue(string(outFile.Bytes())))
 		return true
@@ -599,13 +611,13 @@ func runProcess(label string, command string, args []string) bool {
 
 func runProcessGetResult(label string, command string, args []string) (string, bool) {
 	outFile := NewBufferCloser(nil)
-	fmt.Println(Green(command), Green(args))
 	proc, err := pcm.StartProcess(label, command, args, nil, outFile)
 	if err != nil {
 		return "", false
 	}
 
 	<-proc.WaitCh
+	fmt.Println(Green(command), Green(args))
 	if proc.ExitState.Success() {
 		fmt.Println(Blue(string(outFile.Bytes())))
 		return string(outFile.Bytes()), true

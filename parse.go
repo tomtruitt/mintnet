@@ -20,6 +20,9 @@ func ParseMachines(machsStr string) []string {
 // Takes a mach ranges like "foo[1,2,3];bar[3,4]baz"
 // and returns ["foo1", "foo2", "foo3", "bar3baz", "bar4baz"]
 func parseMachines(machsStr string) ([]string, error) {
+	if len(machsStr) == 0 {
+		return nil, nil
+	}
 	machStrs := strings.Split(machsStr, ";")
 	machsMap := map[string]struct{}{}
 	machs := []string{}

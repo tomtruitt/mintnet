@@ -5,6 +5,16 @@ import (
 	"testing"
 )
 
+func TestParseEmpty(t *testing.T) {
+	machs, err := parseMachines("")
+	if err != nil {
+		t.Fatal("Unexpected error:", err)
+	}
+	if len(machs) != 0 {
+		t.Error("Expected to get zero machines, got ", len(machs))
+	}
+}
+
 func TestParseRange(t *testing.T) {
 	expect(t, "foo", "foo")
 	expect(t, "foo;bar", "foo%bar")
