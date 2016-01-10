@@ -3,7 +3,7 @@
 all: test get_deps install
 
 install:
-	go get github.com/tendermint/mintnet
+	go install github.com/tendermint/mintnet
 
 test:
 	go test github.com/tendermint/mintnet/...
