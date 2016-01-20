@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	. "github.com/tendermint/go-common"
 	pcm "github.com/tendermint/go-process"
+	"github.com/tendermint/go-wire"
 	"github.com/tendermint/tendermint/types"
 
 	"github.com/codegangsta/cli"
@@ -30,11 +32,31 @@ func main() {
 	app.Usage = "mintnet [command] [args...]"
 	app.Commands = []cli.Command{
 		{
+			Name:      "init-validator-set",
+			Usage:     "Initialize a new validator set",
+			ArgsUsage: "[baseDir]",
+			Action: func(c *cli.Context) {
+				cmdValidatorsInit(c)
+			},
+			Flags: []cli.Flag{
+				cli.IntFlag{
+					Name:  "N",
+					Value: 4,
+					Usage: "Size of the validator set",
+				},
+			},
+		},
+		{
 			Name:      "init",
 			Usage:     "Initialize node configuration directories",
 			ArgsUsage: "[baseDir]",
 			Flags: []cli.Flag{
 				machFlag,
+				cli.StringFlag{
+					Name:  "validator-set",
+					Value: "",
+					Usage: "Specify a validator set for the new chain",
+				},
 			},
 			Action: func(c *cli.Context) {
 				cmdInit(c)
@@ -120,6 +142,58 @@ func main() {
 
 //--------------------------------------------------------------------------------
 
+func cmdValidatorsInit(c *cli.Context) {
+	args := c.Args()
+	if len(args) != 1 {
+		cli.ShowAppHelp(c)
+		return
+	}
+	base := args[0]
+
+	N := c.Int("N")
+	genVals := make([]types.GenesisValidator, N)
+
+	// Initialize priv_validator.json's
+	for i := 0; i < N; i++ {
+		err := initValDirectory(base, i)
+		if err != nil {
+			Exit(err.Error())
+		}
+		// Read priv_validator.json to populate genVals
+		name := fmt.Sprintf("val%d", i)
+		privValFile := path.Join(base, name, "priv_validator.json")
+		privVal := types.LoadPrivValidator(privValFile)
+		genVals[i] = types.GenesisValidator{
+			PubKey: privVal.PubKey,
+			Amount: 1,
+			Name:   name,
+		}
+	}
+
+	// write the validator set file
+	b := wire.JSONBytes(genVals)
+
+	err := ioutil.WriteFile(path.Join(base, "validator_set.json"), b, 0444)
+	if err != nil {
+		Exit(err.Error())
+	}
+
+	fmt.Println(Fmt("Successfully initialized %v validators", N))
+
+}
+
+func readJSONFile(o interface{}, filename string) error {
+	b, err := ioutil.ReadFile(filename)
+	if err != nil {
+		return err
+	}
+	wire.ReadJSON(o, b, &err)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // Initialize directories for each node
 func cmdInit(c *cli.Context) {
 	args := c.Args()
@@ -139,21 +213,54 @@ func cmdInit(c *cli.Context) {
 		Exit(err.Error())
 	}
 
-	genVals := make([]types.GenesisValidator, len(machines))
+	var genVals []types.GenesisValidator
 
-	// Initialize core dir and priv_validator.json's
-	for i, mach := range machines {
-		err := initMachCoreDirectory(base, mach)
+	valSet := c.String("validator-set")
+	if valSet != "" {
+		err := readJSONFile(&genVals, path.Join(valSet, "validator_set.json"))
 		if err != nil {
 			Exit(err.Error())
 		}
-		// Read priv_validator.json to populate genVals
-		privValFile := path.Join(base, mach, "core", "priv_validator.json")
-		privVal := types.LoadPrivValidator(privValFile)
-		genVals[i] = types.GenesisValidator{
-			PubKey: privVal.PubKey,
-			Amount: 1,
-			Name:   mach,
+
+		if len(machines) != len(genVals) {
+			Exit(fmt.Sprintf("Validator set size must match number of machines. Got %d validators, %d machines", len(genVals), len(machines)))
+		}
+
+		for i, val := range genVals {
+			// read the validators priv
+			privValFile := path.Join(valSet, val.Name, "priv_validator.json")
+			privVal := types.LoadPrivValidator(privValFile)
+
+			// build the directory
+			mach := machines[i]
+			err := initMachCoreDirectory(base, mach)
+			if err != nil {
+				Exit(err.Error())
+			}
+
+			// overwrite the priv validator
+			privValFile = path.Join(base, mach, "core", "priv_validator.json")
+			privVal.SetFile(privValFile)
+			privVal.Save()
+		}
+	} else {
+
+		genVals = make([]types.GenesisValidator, len(machines))
+
+		// Initialize core dir and priv_validator.json's
+		for i, mach := range machines {
+			err := initMachCoreDirectory(base, mach)
+			if err != nil {
+				Exit(err.Error())
+			}
+			// Read priv_validator.json to populate genVals
+			privValFile := path.Join(base, mach, "core", "priv_validator.json")
+			privVal := types.LoadPrivValidator(privValFile)
+			genVals[i] = types.GenesisValidator{
+				PubKey: privVal.PubKey,
+				Amount: 1,
+				Name:   mach,
+			}
 		}
 	}
 
@@ -185,6 +292,19 @@ func initMachCoreDirectory(base, mach string) error {
 	ensurePrivValidator(path.Join(dir, "priv_validator.json"))
 	return nil
 
+}
+
+func initValDirectory(base string, i int) error {
+	name := fmt.Sprintf("val%d", i)
+	dir := path.Join(base, name)
+	err := EnsureDir(dir, 0777)
+	if err != nil {
+		return err
+	}
+
+	// Create priv_validator.json file if not present
+	ensurePrivValidator(path.Join(dir, "priv_validator.json"))
+	return nil
 }
 
 func ensurePrivValidator(file string) {
