@@ -12,6 +12,12 @@ To provision machines on DigitalOcean:
 mintnet create -- --driver=digitalocean --digitalocean-access-token=YOUR_ACCCESS_TOKEN
 ```
 
+Or, to provision machines on AWS:
+
+```
+mintnet create -- --driver=amazonec2 --amazonec2-access-key=AKI******* --amazonec2-secret-key=8T93C********* --amazonec2-zone=b --amazonec2-vpc-id=vpc-****** aws01`
+```
+
 By default this creates 4 new machines.  Check the help messages for more info, e.g. `mintnet create --help`.
 
 Next, create the testnet configuration folders.
