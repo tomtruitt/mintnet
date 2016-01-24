@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -12,11 +14,16 @@ import (
 
 	. "github.com/tendermint/go-common"
 	pcm "github.com/tendermint/go-process"
+	client "github.com/tendermint/go-rpc/client"
 	"github.com/tendermint/go-wire"
-	"github.com/tendermint/tendermint/types"
+	"github.com/tendermint/netmon/types"
+	ctypes "github.com/tendermint/tendermint/rpc/core/types"
+	tmtypes "github.com/tendermint/tendermint/types"
 
 	"github.com/codegangsta/cli"
 )
+
+const ValSetAnon = "anon"
 
 var (
 	machFlag = cli.StringFlag{
@@ -32,17 +39,21 @@ func main() {
 	app.Usage = "mintnet [command] [args...]"
 	app.Commands = []cli.Command{
 		{
-			Name:      "init-validator-set",
-			Usage:     "Initialize a new validator set",
-			ArgsUsage: "[baseDir]",
+			Name:      "info",
+			Usage:     "Information about running containers",
+			ArgsUsage: "[appName]",
 			Action: func(c *cli.Context) {
-				cmdValidatorsInit(c)
+				cmdInfo(c)
 			},
-			Flags: []cli.Flag{
-				cli.IntFlag{
-					Name:  "N",
-					Value: 4,
-					Usage: "Size of the validator set",
+			Flags: []cli.Flag{machFlag},
+			Subcommands: []cli.Command{
+				{
+					Name:      "port",
+					Usage:     "Print container port mapping",
+					ArgsUsage: "[appName]",
+					Action: func(c *cli.Context) {
+						cmdPorts(c)
+					},
 				},
 			},
 		},
@@ -52,14 +63,41 @@ func main() {
 			ArgsUsage: "[baseDir]",
 			Flags: []cli.Flag{
 				machFlag,
-				cli.StringFlag{
-					Name:  "validator-set",
-					Value: "",
-					Usage: "Specify a validator set for the new chain",
-				},
 			},
 			Action: func(c *cli.Context) {
 				cmdInit(c)
+			},
+			Subcommands: []cli.Command{
+				{
+					Name:      "chain",
+					Usage:     "Initialize a new blockchain",
+					ArgsUsage: "[baseDir]",
+					Action: func(c *cli.Context) {
+						cmdChainInit(c)
+					},
+					Flags: []cli.Flag{
+						cli.StringFlag{
+							Name:  "validator-set",
+							Value: "",
+							Usage: "Specify a path to the validator set for the new chain",
+						},
+					},
+				},
+				{
+					Name:      "validator-set",
+					Usage:     "Initialize a new validator set",
+					ArgsUsage: "[baseDir]",
+					Action: func(c *cli.Context) {
+						cmdValidatorsInit(c)
+					},
+					Flags: []cli.Flag{
+						cli.IntFlag{
+							Name:  "N",
+							Value: 4,
+							Usage: "Size of the validator set",
+						},
+					},
+				},
 			},
 		},
 		{
@@ -94,6 +132,10 @@ func main() {
 					Value: "",
 					Usage: "Comma separated list of machine names for seed, defaults to --machines",
 				},
+				cli.BoolFlag{
+					Name:  "publish-all,P",
+					Usage: "Publish all exposed ports to random ports",
+				}, // or should we make random be default, and let users attempt to force the port?
 				machFlag,
 			},
 			Action: func(c *cli.Context) {
@@ -141,6 +183,36 @@ func main() {
 }
 
 //--------------------------------------------------------------------------------
+func cmdInfo(c *cli.Context) {
+	cli.ShowAppHelp(c)
+}
+
+//--------------------------------------------------------------------------------
+
+func cmdPorts(c *cli.Context) {
+	args := c.Args()
+	if len(args) != 1 {
+		cli.ShowAppHelp(c)
+		return
+	}
+	appName := args[0]
+	machines := ParseMachines(c.GlobalString("machines"))
+	for _, mach := range machines {
+		portMap, err := getContainerPortMap(mach, fmt.Sprintf("%v_tmnode", appName))
+		if err != nil {
+			Exit(err.Error())
+		}
+		fmt.Println("Machine", mach)
+		fmt.Println(portMap)
+		fmt.Println("")
+	}
+}
+
+//--------------------------------------------------------------------------------
+
+func cmdInit(c *cli.Context) {
+	cli.ShowAppHelp(c)
+}
 
 func cmdValidatorsInit(c *cli.Context) {
 	args := c.Args()
@@ -151,7 +223,7 @@ func cmdValidatorsInit(c *cli.Context) {
 	base := args[0]
 
 	N := c.Int("N")
-	genVals := make([]types.GenesisValidator, N)
+	vals := make([]*types.Validator, N)
 
 	// Initialize priv_validator.json's
 	for i := 0; i < N; i++ {
@@ -159,19 +231,22 @@ func cmdValidatorsInit(c *cli.Context) {
 		if err != nil {
 			Exit(err.Error())
 		}
-		// Read priv_validator.json to populate genVals
+		// Read priv_validator.json to populate vals
 		name := fmt.Sprintf("val%d", i)
 		privValFile := path.Join(base, name, "priv_validator.json")
-		privVal := types.LoadPrivValidator(privValFile)
-		genVals[i] = types.GenesisValidator{
+		privVal := tmtypes.LoadPrivValidator(privValFile)
+		vals[i] = &types.Validator{
+			ID:     name,
 			PubKey: privVal.PubKey,
-			Amount: 1,
-			Name:   name,
 		}
 	}
 
+	valSet := types.ValidatorSet{
+		ID:         path.Base(base),
+		Validators: vals,
+	}
 	// write the validator set file
-	b := wire.JSONBytes(genVals)
+	b := wire.JSONBytes(valSet)
 
 	err := ioutil.WriteFile(path.Join(base, "validator_set.json"), b, 0444)
 	if err != nil {
@@ -179,30 +254,17 @@ func cmdValidatorsInit(c *cli.Context) {
 	}
 
 	fmt.Println(Fmt("Successfully initialized %v validators", N))
-
-}
-
-func readJSONFile(o interface{}, filename string) error {
-	b, err := ioutil.ReadFile(filename)
-	if err != nil {
-		return err
-	}
-	wire.ReadJSON(o, b, &err)
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 // Initialize directories for each node
-func cmdInit(c *cli.Context) {
+func cmdChainInit(c *cli.Context) {
 	args := c.Args()
 	if len(args) != 1 {
 		cli.ShowAppHelp(c)
 		return
 	}
 	base := args[0]
-	machines := ParseMachines(c.String("machines"))
+	machines := ParseMachines(c.GlobalString("machines"))
 
 	err := initAppDirectory(base)
 	if err != nil {
@@ -213,23 +275,26 @@ func cmdInit(c *cli.Context) {
 		Exit(err.Error())
 	}
 
-	var genVals []types.GenesisValidator
+	genVals := make([]tmtypes.GenesisValidator, len(machines))
 
-	valSet := c.String("validator-set")
-	if valSet != "" {
-		err := readJSONFile(&genVals, path.Join(valSet, "validator_set.json"))
+	var valSetID string
+	valSetDir := c.String("validator-set")
+	if valSetDir != "" {
+		// validator-set name is the last element of the path
+		valSetID = path.Base(valSetDir)
+
+		var valSet types.ValidatorSet
+		err := ReadJSONFile(&valSet, path.Join(valSetDir, "validator_set.json"))
 		if err != nil {
 			Exit(err.Error())
 		}
+		vals := valSet.Validators
 
-		if len(machines) != len(genVals) {
-			Exit(fmt.Sprintf("Validator set size must match number of machines. Got %d validators, %d machines", len(genVals), len(machines)))
+		if len(machines) != len(vals) {
+			Exit(fmt.Sprintf("Validator set size must match number of machines. Got %d validators, %d machines", len(vals), len(machines)))
 		}
 
-		for i, val := range genVals {
-			// read the validators priv
-			privValFile := path.Join(valSet, val.Name, "priv_validator.json")
-			privVal := types.LoadPrivValidator(privValFile)
+		for i, val := range vals {
 
 			// build the directory
 			mach := machines[i]
@@ -239,13 +304,22 @@ func cmdInit(c *cli.Context) {
 			}
 
 			// overwrite the priv validator
-			privValFile = path.Join(base, mach, "core", "priv_validator.json")
-			privVal.SetFile(privValFile)
+			privValFile := path.Join(valSetDir, val.ID, "priv_validator.json")
+			privVal := tmtypes.LoadPrivValidator(privValFile)
+			privVal.SetFile(path.Join(base, mach, "core", "priv_validator.json"))
 			privVal.Save()
 		}
-	} else {
 
-		genVals = make([]types.GenesisValidator, len(machines))
+		// copy the vals into genVals
+		for i, val := range vals {
+			genVals[i] = tmtypes.GenesisValidator{
+				Name:   val.ID,
+				PubKey: val.PubKey,
+				Amount: 1,
+			}
+		}
+	} else {
+		valSetID = ValSetAnon
 
 		// Initialize core dir and priv_validator.json's
 		for i, mach := range machines {
@@ -253,10 +327,10 @@ func cmdInit(c *cli.Context) {
 			if err != nil {
 				Exit(err.Error())
 			}
-			// Read priv_validator.json to populate genVals
+			// Read priv_validator.json to populate vals
 			privValFile := path.Join(base, mach, "core", "priv_validator.json")
-			privVal := types.LoadPrivValidator(privValFile)
-			genVals[i] = types.GenesisValidator{
+			privVal := tmtypes.LoadPrivValidator(privValFile)
+			genVals[i] = tmtypes.GenesisValidator{
 				PubKey: privVal.PubKey,
 				Amount: 1,
 				Name:   mach,
@@ -265,7 +339,7 @@ func cmdInit(c *cli.Context) {
 	}
 
 	// Generate genesis doc from generated validators
-	genDoc := &types.GenesisDoc{
+	genDoc := &tmtypes.GenesisDoc{
 		GenesisTime: time.Now(),
 		ChainID:     "chain-" + RandStr(6),
 		Validators:  genVals,
@@ -275,6 +349,25 @@ func cmdInit(c *cli.Context) {
 	// Write genesis file.
 	for _, mach := range machines {
 		genDoc.SaveAs(path.Join(base, mach, "core", "genesis.json"))
+	}
+
+	// write the chain meta data (ie. validator set name and validators)
+	blockchainCfg := &types.BlockchainConfig{
+		ValSetID:   valSetID,
+		Validators: make([]*types.ValidatorState, len(genVals)),
+	}
+
+	for i, v := range genVals {
+		blockchainCfg.Validators[i] = &types.ValidatorState{
+			Config: &types.ValidatorConfig{
+				Validator: &types.Validator{ID: v.Name, PubKey: v.PubKey},
+				Index:     i, // XXX: we may want more control here
+			},
+		}
+	}
+	err = WriteBlockchainConfig(base, blockchainCfg)
+	if err != nil {
+		Exit(err.Error())
 	}
 
 	fmt.Println(Fmt("Successfully initialized %v node directories", len(machines)))
@@ -311,7 +404,7 @@ func ensurePrivValidator(file string) {
 	if FileExists(file) {
 		return
 	}
-	privValidator := types.GenPrivValidator()
+	privValidator := tmtypes.GenPrivValidator()
 	privValidator.SetFile(file)
 	privValidator.Save()
 }
@@ -463,6 +556,13 @@ func cmdStart(c *cli.Context) {
 		seedMachines = machines
 	}
 
+	// chain config tells us which validator set we're working with (named or anon)
+	chainCfg, err := ReadBlockchainConfig(base)
+	if err != nil {
+		Exit(err.Error())
+	}
+	chainCfg.ID = app
+
 	// Get machine ips
 	seeds := make([]string, len(seedMachines))
 	for i, mach := range seedMachines {
@@ -470,22 +570,105 @@ func cmdStart(c *cli.Context) {
 		if err != nil {
 			Exit(err.Error())
 		}
+		// XXX: we try these by default regardless...
+		// else need to update script to not pass --seeds if there are none
+		// (ie. if randomPorts == true)
 		seeds[i] = ip + ":46656"
 	}
 
+	// necessary if we are running multiple chains on one machine
+	randomPorts := c.Bool("publish-all")
+
 	// Initialize TMData, TMApp, and TMNode container on each machine
+	// We let nodes boot and then detect which port they're listening on to collect seeds
 	var wg sync.WaitGroup
+	seedsCh := make(chan *types.ValidatorConfig, len(machines))
+	errCh := make(chan error, len(machines))
 	for _, mach := range machines {
 		wg.Add(1)
 		go func(mach string) {
 			defer wg.Done()
-			startTMData(mach, app)
-			copyNodeDir(mach, app, base)
-			startTMApp(mach, app)
-			startTMNode(mach, app, seeds)
+			if err := startTMData(mach, app); err != nil {
+				errCh <- err
+				return
+			}
+			if err := copyNodeDir(mach, app, base); err != nil {
+				errCh <- err
+				return
+			}
+			if err := startTMApp(mach, app); err != nil {
+				errCh <- err
+				return
+			}
+			seed, err := startTMNode(mach, app, seeds, randomPorts)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			seedsCh <- seed
 		}(mach)
 	}
 	wg.Wait()
+
+	var valConfs []*types.ValidatorConfig
+	seeds = []string{} // for convenienve if we still need to dial them
+	for i := 0; i < len(machines); i++ {
+		select {
+		case err = <-errCh:
+			fmt.Println(Red(err.Error()))
+		case valConf := <-seedsCh:
+			valConfs = append(valConfs, valConf)
+			seeds = append(seeds, valConf.P2PAddr)
+		}
+	}
+
+	// fill in validators and write chain config to file
+	for i, valCfg := range valConfs {
+		valCfg.Index = chainCfg.Validators[i].Config.Index
+		chainCfg.Validators[i] = &types.ValidatorState{
+			Config: valCfg,
+		}
+
+	}
+	if err := WriteBlockchainConfig(base, chainCfg); err != nil {
+		fmt.Println(string(wire.JSONBytes(chainCfg)))
+		Exit(err.Error())
+	}
+
+	// bail if anything failed; we've already written anyone that didnt to file
+	if err != nil {
+		Exit(err.Error())
+	}
+
+	if randomPorts {
+		// dial the seeds
+		fmt.Println(Green("Instruct nodes to dial eachother"))
+		for _, val := range valConfs {
+			wg.Add(1)
+			go func(rpcAddr string) {
+				defer wg.Done()
+				if err := dialSeeds(rpcAddr, seeds); err != nil {
+					fmt.Println(Red(err.Error()))
+					return
+				}
+			}(val.RPCAddr)
+		}
+		wg.Wait()
+	}
+	fmt.Println(Green("Done launching tendermint network for " + app))
+}
+
+func ReadBlockchainConfig(base string) (*types.BlockchainConfig, error) {
+	chainCfg := new(types.BlockchainConfig)
+	err := ReadJSONFile(chainCfg, path.Join(base, "chain_config.json"))
+	return chainCfg, err
+}
+
+func WriteBlockchainConfig(base string, chainCfg *types.BlockchainConfig) error {
+	b := wire.JSONBytes(chainCfg)
+	var buf bytes.Buffer
+	json.Indent(&buf, b, "", "\t")
+	return ioutil.WriteFile(path.Join(base, "chain_config.json"), buf.Bytes(), 0600)
 }
 
 /*
@@ -541,16 +724,20 @@ func startTMApp(mach, app string) error {
 	return nil
 }
 
-func startTMNode(mach, app string, seeds []string) error {
+func startTMNode(mach, app string, seeds []string, randomPort bool) (*types.ValidatorConfig, error) {
+	portString := "-p 46656:46656 -p 46657:46657"
+	if randomPort {
+		portString = "-P"
+	}
+
 	proxyApp := Fmt("tcp://%v_tmapp:46658", app)
 	tmRoot := "/data/tendermint/core"
-	args := []string{"ssh", mach, Fmt(`docker run --name %v_tmnode --volumes-from %v_tmdata -d `+
-		`--link %v_tmapp -p 46656:46656 -p 46657:46657 `+
-		`-e TMNAME="%v" -e TMSEEDS="%v" -e TMROOT="%v" -e PROXYAPP="%v" `+
+	args := []string{"ssh", mach, Fmt(`docker run %v --name %v_tmnode --volumes-from %v_tmdata -d `+
+		`--link %v_tmapp -e TMNAME="%v" -e TMSEEDS="%v" -e TMROOT="%v" -e PROXYAPP="%v" `+
 		`tendermint/tmbase /data/tendermint/core/init.sh`,
-		app, app, app, eB(mach), eB(strings.Join(seeds, ",")), tmRoot, eB(proxyApp))}
+		portString, app, app, app, eB(mach), eB(strings.Join(seeds, ",")), tmRoot, eB(proxyApp))}
 	if !runProcess("start-tmnode-"+mach, "docker-machine", args) {
-		return errors.New("Failed to start tmnode on machine " + mach)
+		return nil, errors.New("Failed to start tmnode on machine " + mach)
 	}
 
 	// Give it some time to install and make repo.
@@ -565,13 +752,93 @@ func startTMNode(mach, app string, seeds []string) error {
 			fmt.Println(Yellow(Fmt("tendermint not yet installed in %v. Waiting...", mach)))
 			time.Sleep(time.Second * 5)
 			continue
-			// return "", errors.New("Failed to get tmnode validator on machine " + mach)
 		} else {
 			fmt.Println(Fmt("validator for %v: %v", mach, output))
-			return nil
+
+			// now grab the node's public address and port
+			ip, err := getMachineIP(mach)
+			if err != nil {
+				return nil, err
+			}
+
+			valConfig := &types.ValidatorConfig{
+				Validator: &types.Validator{
+					ID: mach,
+				},
+			}
+
+			var p2pPort, rpcPort = "46656", "46657"
+			if randomPort {
+				portMap, err := getContainerPortMap(mach, fmt.Sprintf("%v_tmnode", app))
+				if err != nil {
+					return nil, err
+				}
+				p2pPort, ok = portMap["46656"]
+				if !ok {
+					return nil, errors.New("No port map found for p2p port 46656 on mach " + mach)
+				}
+				rpcPort, ok = portMap["46657"]
+				if !ok {
+					return nil, errors.New("No port map found for rpc port 46657 on mach " + mach)
+				}
+			}
+			valConfig.P2PAddr = fmt.Sprintf("%v:%v", ip, p2pPort)
+			valConfig.RPCAddr = fmt.Sprintf("%v:%v", ip, rpcPort)
+
+			// get pubkey from rpc endpoint
+			// try a few times in case the rpc server is slow to start
+			var result ctypes.TMResult
+			for i := 0; i < 5; i++ {
+				time.Sleep(time.Second)
+				c := client.NewClientURI(fmt.Sprintf("http://%s", valConfig.RPCAddr))
+				if _, err = c.Call("status", nil, &result); err != nil {
+					continue
+				}
+				status := result.(*ctypes.ResultStatus)
+				valConfig.Validator.PubKey = status.PubKey
+				break
+			}
+			if err != nil {
+				return nil, fmt.Errorf("Error getting PubKey from mach %s on %s: %v", mach, valConfig.RPCAddr, err)
+			}
+
+			return valConfig, nil
 		}
 	}
+	return nil, nil
+}
 
+func dialSeeds(rpcAddr string, seeds []string) error {
+	var result ctypes.TMResult
+	c := client.NewClientURI(fmt.Sprintf("http://%s", rpcAddr))
+	args := map[string]interface{}{"seeds": seeds}
+	if _, err := c.Call("dial_seeds", args, &result); err != nil {
+		return errors.New("Error dialing seeds at rpc address " + rpcAddr)
+	}
+	return nil
+}
+
+func getContainerPortMap(mach, container string) (map[string]string, error) {
+	args := []string{"ssh", mach, Fmt(`docker port %v`, container)}
+	output, ok := runProcessGetResult(fmt.Sprintf("get-ports-%v-%v", mach, container), "docker-machine", args)
+	if !ok {
+		return nil, errors.New("Failed to get the exposed ports on machine " + mach + " for container " + container)
+	}
+	// what a hack. might be time to start using the go-dockerclient or eris-cli packages
+	portMap := make(map[string]string)
+	spl := strings.Split(string(output), "\n")
+	for _, s := range spl {
+		// 4001/tcp -> 0.0.0.0:32769
+		spl2 := strings.Split(s, "->")
+		if len(spl2) < 2 {
+			continue
+		}
+		port := strings.TrimSpace(strings.Split(spl2[0], "/")[0])
+		mapS := strings.Split(spl2[1], ":")
+		mappedTo := strings.TrimSpace(mapS[len(mapS)-1])
+		portMap[port] = mappedTo
+	}
+	return portMap, nil
 }
 
 //--------------------------------------------------------------------------------
@@ -855,4 +1122,18 @@ func condenseBash(cmd string) string {
 		res = append(res, line)
 	}
 	return strings.Join(res, "; ")
+}
+
+//--------------------------------------------------------------------------------
+
+func ReadJSONFile(o interface{}, filename string) error {
+	b, err := ioutil.ReadFile(filename)
+	if err != nil {
+		return err
+	}
+	wire.ReadJSON(o, b, &err)
+	if err != nil {
+		return err
+	}
+	return nil
 }
