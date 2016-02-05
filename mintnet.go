@@ -136,7 +136,11 @@ func cmdInit(c *cli.Context) {
 	base := args[0]
 	machines := ParseMachines(c.String("machines"))
 
-	err := initAppDirectory(base)
+	err := initDataDirectory(base)
+	if err != nil {
+		Exit(err.Error())
+	}
+	err = initAppDirectory(base)
 	if err != nil {
 		Exit(err.Error())
 	}
@@ -202,6 +206,27 @@ func ensurePrivValidator(file string) {
 	privValidator.Save()
 }
 
+// Initialize common data directory
+func initDataDirectory(base string) error {
+	dir := path.Join(base, "data")
+	err := EnsureDir(dir, 0777)
+	if err != nil {
+		return err
+	}
+
+	// Write a silly sample bash script.
+	scriptBytes := []byte(`#! /bin/bash
+# This is a sample bash script for MerkleEyes.
+# NOTE: mintnet expects data.sock to be created
+
+go get github.com/tendermint/merkleeyes/cmd/merkleeyes
+
+merkleeyes server --address="unix:///data/tendermint/data/data.sock"`)
+
+	err = WriteFile(path.Join(dir, "init.sh"), scriptBytes, 0777)
+	return err
+}
+
 // Initialize common app directory
 func initAppDirectory(base string) error {
 	dir := path.Join(base, "app")
@@ -213,21 +238,13 @@ func initAppDirectory(base string) error {
 	// Write a silly sample bash script.
 	scriptBytes := []byte(`#! /bin/bash
 # This is a sample bash script for a TMSP application
-# The source code for this sample application is XXX
-# Edit this script before "mintnet deploy" to change
-# the application being run.
-# NOTE: This script is tailored for a Go-based project.
-# Want other languages?  Let us know!  support@tendermint.com
 
-BRANCH="master"
+cd app/
+git clone https://github.com/tendermint/nomnomcoin.git
+cd nomnomcoin
+npm install .
 
-go get -d github.com/tendermint/tmsp/cmd/counter
-cd $GOPATH/src/github.com/tendermint/tmsp/
-git fetch origin $BRANCH
-git checkout $BRANCH
-make install
-
-counter --serial`)
+node app.js --eyes="unix:///data/tendermint/data/data.sock"`)
 
 	err = WriteFile(path.Join(dir, "init.sh"), scriptBytes, 0777)
 	return err
@@ -359,14 +376,15 @@ func cmdStart(c *cli.Context) {
 		seeds[i] = ip + ":46656"
 	}
 
-	// Initialize TMData, TMApp, and TMNode container on each machine
+	// Initialize TMCommon, TMApp, and TMNode container on each machine
 	var wg sync.WaitGroup
 	for _, mach := range machines {
 		wg.Add(1)
 		go func(mach string) {
 			defer wg.Done()
-			startTMData(mach, app)
+			startTMCommon(mach, app)
 			copyNodeDir(mach, app, base)
+			startTMData(mach, app)
 			startTMApp(mach, app)
 			startTMNode(mach, app, seeds)
 		}(mach)
@@ -394,16 +412,20 @@ func listMachinesFromBase(base string) ([]string, error) {
 }
 */
 
-func startTMData(mach, app string) error {
-	args := []string{"ssh", mach, Fmt(`docker run --name %v_tmdata --entrypoint /bin/echo tendermint/tmbase`, app)}
-	if !runProcess("start-tmdata-"+mach, "docker-machine", args) {
-		return errors.New("Failed to start tmdata on machine " + mach)
+func startTMCommon(mach, app string) error {
+	args := []string{"ssh", mach, Fmt(`docker run --name %v_tmcommon --entrypoint /bin/echo tendermint/tmbase`, app)}
+	if !runProcess("start-tmcommon-"+mach, "docker-machine", args) {
+		return errors.New("Failed to start tmcommon on machine " + mach)
 	}
 	return nil
 }
 
 func copyNodeDir(mach, app, base string) error {
-	err := copyToMachine(mach, app, path.Join(base, "app"), "/data/tendermint/app", true)
+	err := copyToMachine(mach, app, path.Join(base, "data"), "/data/tendermint/data", true)
+	if err != nil {
+		return err
+	}
+	err = copyToMachine(mach, app, path.Join(base, "app"), "/data/tendermint/app", true)
 	if err != nil {
 		return err
 	}
@@ -418,8 +440,24 @@ func copyNodeDir(mach, app, base string) error {
 	return nil
 }
 
+// Starts data service and checks for existence of /data/tendermint/data/data.sock
+func startTMData(mach, app string) error {
+	args := []string{"ssh", mach, Fmt(`docker run --name %v_tmdata --volumes-from %v_tmcommon -d `+
+		`tendermint/tmbase /data/tendermint/data/init.sh`, app, app)}
+	if !runProcess("start-tmdata-"+mach, "docker-machine", args) {
+		return errors.New("Failed to start tmdata on machine " + mach)
+	}
+	for i := 1; i < 10; i++ { // TODO configure
+		time.Sleep(time.Duration(i) * time.Second)
+		if checkFileExists(mach, app+"_tmdata", "/data/tendermint/data/data.sock") {
+			return nil
+		}
+	}
+	return errors.New("Failed to start tmdata on machine " + mach + " (timeout)")
+}
+
 func startTMApp(mach, app string) error {
-	args := []string{"ssh", mach, Fmt(`docker run --name %v_tmapp --volumes-from %v_tmdata -d `+
+	args := []string{"ssh", mach, Fmt(`docker run --name %v_tmapp --volumes-from %v_tmcommon -d `+
 		`tendermint/tmbase /data/tendermint/app/init.sh`, app, app)}
 	if !runProcess("start-tmapp-"+mach, "docker-machine", args) {
 		return errors.New("Failed to start tmapp on machine " + mach)
@@ -430,7 +468,7 @@ func startTMApp(mach, app string) error {
 func startTMNode(mach, app string, seeds []string) error {
 	proxyApp := Fmt("tcp://%v_tmapp:46658", app)
 	tmRoot := "/data/tendermint/core"
-	args := []string{"ssh", mach, Fmt(`docker run --name %v_tmnode --volumes-from %v_tmdata -d `+
+	args := []string{"ssh", mach, Fmt(`docker run --name %v_tmnode --volumes-from %v_tmcommon -d `+
 		`--link %v_tmapp -p 46656:46656 -p 46657:46657 `+
 		`-e TMNAME="%v" -e TMSEEDS="%v" -e TMROOT="%v" -e PROXYAPP="%v" `+
 		`tendermint/tmbase /data/tendermint/core/init.sh`,
@@ -470,7 +508,7 @@ func cmdStop(c *cli.Context) {
 	app := args[0]
 	machines := ParseMachines(c.String("machines"))
 
-	// Initialize TMData, TMApp, and TMNode container on each machine
+	// Initialize TMCommon, TMData, TMApp, and TMNode container on each machine
 	var wg sync.WaitGroup
 	for _, mach := range machines {
 		wg.Add(1)
@@ -524,13 +562,13 @@ func cmdRm(c *cli.Context) {
 		wg.Wait()
 	}
 
-	// Initialize TMData, TMApp, and TMNode container on each machine
+	// Initialize TMCommon, TMApp, and TMNode container on each machine
 	var wg sync.WaitGroup
 	for _, mach := range machines {
 		wg.Add(1)
 		go func(mach string) {
 			defer wg.Done()
-			rmTMData(mach, app)
+			rmTMCommon(mach, app)
 			rmTMApp(mach, app)
 			rmTMNode(mach, app)
 		}(mach)
@@ -538,10 +576,10 @@ func cmdRm(c *cli.Context) {
 	wg.Wait()
 }
 
-func rmTMData(mach, app string) error {
-	args := []string{"ssh", mach, Fmt(`docker rm %v_tmdata`, app)}
-	if !runProcess("rm-tmdata-"+mach, "docker-machine", args) {
-		return errors.New("Failed to rm tmdata on machine " + mach)
+func rmTMCommon(mach, app string) error {
+	args := []string{"ssh", mach, Fmt(`docker rm %v_tmcommon`, app)}
+	if !runProcess("rm-tmcommon-"+mach, "docker-machine", args) {
+		return errors.New("Failed to rm tmcommon on machine " + mach)
 	}
 	return nil
 }
@@ -632,20 +670,27 @@ func copyToMachine(mach string, app string, srcPath string, dstPath string, copy
 	if copyContents {
 		tempFile = tempFile + "/."
 	}
-	args = []string{"ssh", mach, Fmt("docker cp %v %v_tmdata:%v", tempFile, app, dstPath)}
+	args = []string{"ssh", mach, Fmt("docker cp %v %v_tmcommon:%v", tempFile, app, dstPath)}
 	if !runProcess("docker-cp-file-"+mach, "docker-machine", args) {
 		return errors.New("Failed to docker-cp file to container in machine " + mach)
 	}
 
 	// Next, change the ownership of the file to tmuser
 	// TODO We don't really want to change all the permissions
-	args = []string{"ssh", mach, Fmt(`docker run --volumes-from %v_tmdata -u root tendermint/tmbase chown -R tmuser:tmuser %v`, app, dstPath)}
+	args = []string{"ssh", mach, Fmt(`docker run --rm --volumes-from %v_tmcommon -u root tendermint/tmbase chown -R tmuser:tmuser %v`, app, dstPath)}
 	if !runProcess("docker-chmod-file-"+mach, "docker-machine", args) {
 		return errors.New("Failed to docker-run(chmod) file in machine " + mach)
 	}
 
 	// TODO: remove tempFile
 	return nil
+}
+
+// NOTE: returns false if any error
+func checkFileExists(mach string, container string, path string) bool {
+	args := []string{"ssh", mach, Fmt(`docker exec %v ls %v`, container, path)}
+	_, ok := runProcessGetResult("check-file-exists-"+mach, "docker-machine", args)
+	return ok
 }
 
 //--------------------------------------------------------------------------------
