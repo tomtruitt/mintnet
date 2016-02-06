@@ -16,7 +16,6 @@ import (
 	pcm "github.com/tendermint/go-process"
 	client "github.com/tendermint/go-rpc/client"
 	"github.com/tendermint/go-wire"
-	"github.com/tendermint/netmon/types"
 	ctypes "github.com/tendermint/tendermint/rpc/core/types"
 	tmtypes "github.com/tendermint/tendermint/types"
 
@@ -223,7 +222,7 @@ func cmdValidatorsInit(c *cli.Context) {
 	base := args[0]
 
 	N := c.Int("N")
-	vals := make([]*types.Validator, N)
+	vals := make([]*Validator, N)
 
 	// Initialize priv_validator.json's
 	for i := 0; i < N; i++ {
@@ -235,13 +234,13 @@ func cmdValidatorsInit(c *cli.Context) {
 		name := fmt.Sprintf("val%d", i)
 		privValFile := path.Join(base, name, "priv_validator.json")
 		privVal := tmtypes.LoadPrivValidator(privValFile)
-		vals[i] = &types.Validator{
+		vals[i] = &Validator{
 			ID:     name,
 			PubKey: privVal.PubKey,
 		}
 	}
 
-	valSet := types.ValidatorSet{
+	valSet := ValidatorSet{
 		ID:         path.Base(base),
 		Validators: vals,
 	}
@@ -287,7 +286,7 @@ func cmdChainInit(c *cli.Context) {
 		// validator-set name is the last element of the path
 		valSetID = path.Base(valSetDir)
 
-		var valSet types.ValidatorSet
+		var valSet ValidatorSet
 		err := ReadJSONFile(&valSet, path.Join(valSetDir, "validator_set.json"))
 		if err != nil {
 			Exit(err.Error())
@@ -356,17 +355,15 @@ func cmdChainInit(c *cli.Context) {
 	}
 
 	// write the chain meta data (ie. validator set name and validators)
-	blockchainCfg := &types.BlockchainConfig{
+	blockchainCfg := &BlockchainConfig{
 		ValSetID:   valSetID,
-		Validators: make([]*types.ValidatorState, len(genVals)),
+		Validators: make([]*ValidatorConfig, len(genVals)),
 	}
 
 	for i, v := range genVals {
-		blockchainCfg.Validators[i] = &types.ValidatorState{
-			Config: &types.ValidatorConfig{
-				Validator: &types.Validator{ID: v.Name, PubKey: v.PubKey},
-				Index:     i, // XXX: we may want more control here
-			},
+		blockchainCfg.Validators[i] = &ValidatorConfig{
+			Validator: &Validator{ID: v.Name, PubKey: v.PubKey},
+			Index:     i, // XXX: we may want more control here
 		}
 	}
 	err = WriteBlockchainConfig(base, blockchainCfg)
@@ -599,7 +596,7 @@ func cmdStart(c *cli.Context) {
 	// Initialize TMData, TMApp, and TMNode container on each machine
 	// We let nodes boot and then detect which port they're listening on to collect seeds
 	var wg sync.WaitGroup
-	seedsCh := make(chan *types.ValidatorConfig, len(machines))
+	seedsCh := make(chan *ValidatorConfig, len(machines))
 	errCh := make(chan error, len(machines))
 	for _, mach := range machines {
 		wg.Add(1)
@@ -631,7 +628,7 @@ func cmdStart(c *cli.Context) {
 	}
 	wg.Wait()
 
-	var valConfs []*types.ValidatorConfig
+	var valConfs []*ValidatorConfig
 	seeds = []string{} // for convenienve if we still need to dial them
 	for i := 0; i < len(machines); i++ {
 		select {
@@ -645,11 +642,8 @@ func cmdStart(c *cli.Context) {
 
 	// fill in validators and write chain config to file
 	for i, valCfg := range valConfs {
-		valCfg.Index = chainCfg.Validators[i].Config.Index
-		chainCfg.Validators[i] = &types.ValidatorState{
-			Config: valCfg,
-		}
-
+		valCfg.Index = chainCfg.Validators[i].Index
+		chainCfg.Validators[i] = valCfg
 	}
 	if err := WriteBlockchainConfig(base, chainCfg); err != nil {
 		fmt.Println(string(wire.JSONBytes(chainCfg)))
@@ -679,13 +673,13 @@ func cmdStart(c *cli.Context) {
 	fmt.Println(Green("Done launching tendermint network for " + app))
 }
 
-func ReadBlockchainConfig(base string) (*types.BlockchainConfig, error) {
-	chainCfg := new(types.BlockchainConfig)
+func ReadBlockchainConfig(base string) (*BlockchainConfig, error) {
+	chainCfg := new(BlockchainConfig)
 	err := ReadJSONFile(chainCfg, path.Join(base, "chain_config.json"))
 	return chainCfg, err
 }
 
-func WriteBlockchainConfig(base string, chainCfg *types.BlockchainConfig) error {
+func WriteBlockchainConfig(base string, chainCfg *BlockchainConfig) error {
 	b := wire.JSONBytes(chainCfg)
 	var buf bytes.Buffer
 	json.Indent(&buf, b, "", "\t")
@@ -765,7 +759,7 @@ func startTMApp(mach, app string) error {
 	return nil
 }
 
-func startTMNode(mach, app string, seeds []string, randomPort bool) (*types.ValidatorConfig, error) {
+func startTMNode(mach, app string, seeds []string, randomPort bool) (*ValidatorConfig, error) {
 	portString := "-p 46656:46656 -p 46657:46657"
 	if randomPort {
 		portString = "-P"
@@ -802,8 +796,8 @@ func startTMNode(mach, app string, seeds []string, randomPort bool) (*types.Vali
 				return nil, err
 			}
 
-			valConfig := &types.ValidatorConfig{
-				Validator: &types.Validator{
+			valConfig := &ValidatorConfig{
+				Validator: &Validator{
 					ID: mach,
 				},
 			}
