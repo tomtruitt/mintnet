@@ -31,6 +31,8 @@ This creates directories in `mytest_dir` for the application.
 ```
 ls mytest_dir/
   app   # Common configuration directory for your blockchain applicaiton
+  core  # Common configuration directory for Tendermint Core
+  data  # Common configuration directory for MerkleEyes key-value store
   mach1 # Configuration directory for the Tendermint core daemon on machine 1
   mach2 # Configuration directory for the Tendermint core daemon on machine 2
   mach3 # Configuration directory for the Tendermint core daemon on machine 3
@@ -46,7 +48,7 @@ mintnet start mytest mytest_dir/
 You can stop and remove the application as well.
 
 ```
-mintnet stop mytest; mintnet rm mytest
+mintnet rm --force mytest
 ```
 
 Don't forget to destroy your createed machines!
