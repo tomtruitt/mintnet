@@ -65,6 +65,11 @@ func main() {
 							Value: "",
 							Usage: "Specify a path to the validator set for the new chain",
 						},
+						cli.StringFlag{
+							Name:  "app",
+							Value: "",
+							Usage: "Specify an init.sh file for the app to run",
+						},
 					},
 				},
 				{

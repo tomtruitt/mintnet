@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"path"
 	"time"
 
@@ -53,7 +52,7 @@ func cmdValidatorsInit(c *cli.Context) {
 	// write the validator set file
 	b := wire.JSONBytes(valSet)
 
-	err := ioutil.WriteFile(path.Join(base, "validator_set.json"), b, 0444)
+	err := WriteFile(path.Join(base, "validator_set.json"), b, 0444)
 	if err != nil {
 		Exit(err.Error())
 	}
@@ -70,12 +69,13 @@ func cmdChainInit(c *cli.Context) {
 	}
 	base := args[0]
 	machines := ParseMachines(c.GlobalString("machines"))
+	app := c.String("app")
 
 	err := initDataDirectory(base)
 	if err != nil {
 		Exit(err.Error())
 	}
-	err = initAppDirectory(base)
+	err = initAppDirectory(base, app)
 	if err != nil {
 		Exit(err.Error())
 	}
@@ -238,15 +238,17 @@ merkleeyes server --address="unix:///data/tendermint/data/data.sock"`)
 }
 
 // Initialize common app directory
-func initAppDirectory(base string) error {
+func initAppDirectory(base, app string) error {
 	dir := path.Join(base, "app")
 	err := EnsureDir(dir, 0777)
 	if err != nil {
 		return err
 	}
 
-	// Write a silly sample bash script.
-	scriptBytes := []byte(`#! /bin/bash
+	var scriptBytes []byte
+	if app == "" {
+		// Write a silly sample bash script.
+		scriptBytes = []byte(`#! /bin/bash
 # This is a sample bash script for a TMSP application
 
 cd app/
@@ -255,6 +257,13 @@ cd nomnomcoin
 npm install .
 
 node app.js --eyes="unix:///data/tendermint/data/data.sock"`)
+	} else {
+		var err error
+		scriptBytes, err = ReadFile(app)
+		if err != nil {
+			return err
+		}
+	}
 
 	err = WriteFile(path.Join(dir, "init.sh"), scriptBytes, 0777)
 	return err
