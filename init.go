@@ -288,7 +288,7 @@ git fetch origin $BRANCH
 git checkout $BRANCH
 make install
 
-tendermint node --seeds="$TMSEEDS" --moniker="$TMNAME" --proxy_app="$PROXYAPP"`)
+tendermint node --fast_sync=false --seeds="$TMSEEDS" --moniker="$TMNAME" --proxy_app="$PROXYAPP"`)
 
 	err = WriteFile(path.Join(dir, "init.sh"), scriptBytes, 0777)
 	return err

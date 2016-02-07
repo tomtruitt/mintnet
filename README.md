@@ -6,13 +6,13 @@ Then, install `mintnet`.
 go get github.com/tendermint/mintnet
 ```
 
-To provision machines on DigitalOcean:
+To create machines on DigitalOcean:
 
 ```
 mintnet create -- --driver=digitalocean --digitalocean-access-token=YOUR_ACCCESS_TOKEN
 ```
 
-Or, to provision machines on AWS:
+Or, to create machines on AWS:
 
 ```
 mintnet create -- --driver=amazonec2 --amazonec2-access-key=AKI******* --amazonec2-secret-key=8T93C********* --amazonec2-zone=b --amazonec2-vpc-id=vpc-****** aws01`
@@ -49,7 +49,7 @@ You can stop and remove the application as well.
 mintnet stop mytest; mintnet rm mytest
 ```
 
-Don't forget to destroy your provisioned machines!
+Don't forget to destroy your createed machines!
 
 ```
 mintnet destroy --machines="mach1,mach2,mach3,mach4"

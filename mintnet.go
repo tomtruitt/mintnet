@@ -98,6 +98,18 @@ func main() {
 		},
 
 		{
+			Name:      "provision",
+			Usage:     "Provision already created machines (useful if the create failed)",
+			ArgsUsage: "",
+			Flags: []cli.Flag{
+				machFlag,
+			},
+			Action: func(c *cli.Context) {
+				cmdProvision(c)
+			},
+		},
+
+		{
 			Name:      "destroy",
 			Usage:     "Destroy a Tendermint network",
 			ArgsUsage: "",
@@ -127,6 +139,18 @@ func main() {
 			},
 			Action: func(c *cli.Context) {
 				cmdStart(c)
+			},
+		},
+
+		{
+			Name:      "restart",
+			Usage:     "Re start a stopped blockchain application",
+			ArgsUsage: "[appName]",
+			Flags: []cli.Flag{
+				machFlag,
+			},
+			Action: func(c *cli.Context) {
+				cmdRestart(c)
 			},
 		},
 

@@ -42,7 +42,7 @@ func cmdCreate(c *cli.Context) {
 	args := c.Args()
 	machines := ParseMachines(c.String("machines"))
 
-	errs := provisionMachines(machines, args)
+	errs := createMachines(machines, args)
 	if len(errs) > 0 {
 		Exit(Fmt("There were %v errors", len(errs)))
 	} else {
@@ -50,13 +50,13 @@ func cmdCreate(c *cli.Context) {
 	}
 }
 
-func provisionMachines(machines []string, args []string) (errs []error) {
+func createMachines(machines []string, args []string) (errs []error) {
 	var wg sync.WaitGroup
 	for _, mach := range machines {
 		wg.Add(1)
 		go func(mach string) {
 			defer wg.Done()
-			err := provisionMachine(args, mach)
+			err := createMachine(args, mach)
 			if err != nil {
 				errs = append(errs, err)
 			}
@@ -66,11 +66,11 @@ func provisionMachines(machines []string, args []string) (errs []error) {
 	return errs
 }
 
-func provisionMachine(args []string, mach string) error {
+func createMachine(args []string, mach string) error {
 	args = append([]string{"create"}, args...)
 	args = append(args, mach)
-	if !runProcess("provision-"+mach, "docker-machine", args) {
-		return errors.New("Failed to provision machine " + mach)
+	if !runProcess("create-"+mach, "docker-machine", args) {
+		return errors.New("Failed to create machine " + mach)
 	}
 	return nil
 }
@@ -100,6 +100,45 @@ func cmdDestroy(c *cli.Context) {
 	//wg.Wait()
 
 	fmt.Println("Success!")
+}
+
+//--------------------------------------------------------------------------------
+
+func cmdProvision(c *cli.Context) {
+	args := c.Args()
+	machines := ParseMachines(c.String("machines"))
+
+	errs := provisionMachines(machines, args)
+	if len(errs) > 0 {
+		Exit(Fmt("There were %v errors", len(errs)))
+	} else {
+		fmt.Println(Fmt("Successfully created %v machines", len(machines)))
+	}
+}
+
+func provisionMachines(machines []string, args []string) (errs []error) {
+	var wg sync.WaitGroup
+	for _, mach := range machines {
+		wg.Add(1)
+		go func(mach string) {
+			defer wg.Done()
+			err := provisionMachine(args, mach)
+			if err != nil {
+				errs = append(errs, err)
+			}
+		}(mach)
+	}
+	wg.Wait()
+	return errs
+}
+
+func provisionMachine(args []string, mach string) error {
+	args = append([]string{"provision"}, args...)
+	args = append(args, mach)
+	if !runProcess("provision-"+mach, "docker-machine", args) {
+		return errors.New("Failed to provision machine " + mach)
+	}
+	return nil
 }
 
 //--------------------------------------------------------------------------------

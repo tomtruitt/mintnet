@@ -343,6 +343,45 @@ func getContainerPortMap(mach, container string) (map[string]string, error) {
 
 //--------------------------------------------------------------------------------
 
+func cmdRestart(c *cli.Context) {
+	args := c.Args()
+	if len(args) == 0 {
+		Exit("restart requires argument for app name")
+	}
+	app := args[0]
+	machines := ParseMachines(c.String("machines"))
+
+	// Restart TMApp, and TMNode container on each machine
+	var wg sync.WaitGroup
+	for _, mach := range machines {
+		wg.Add(1)
+		go func(mach string) {
+			defer wg.Done()
+			restartTMApp(mach, app)
+			restartTMNode(mach, app)
+		}(mach)
+	}
+	wg.Wait()
+}
+
+func restartTMNode(mach, app string) error {
+	args := []string{"ssh", mach, Fmt(`docker start %v_tmnode`, app)}
+	if !runProcess("restart-tmnode-"+mach, "docker-machine", args) {
+		return errors.New("Failed to restart tmnode on machine " + mach)
+	}
+	return nil
+}
+
+func restartTMApp(mach, app string) error {
+	args := []string{"ssh", mach, Fmt(`docker start %v_tmapp`, app)}
+	if !runProcess("restart-tmapp-"+mach, "docker-machine", args) {
+		return errors.New("Failed to restart tmapp on machine " + mach)
+	}
+	return nil
+}
+
+//--------------------------------------------------------------------------------
+
 func cmdStop(c *cli.Context) {
 	args := c.Args()
 	if len(args) == 0 {
