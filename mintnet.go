@@ -70,6 +70,11 @@ func main() {
 							Value: "",
 							Usage: "Specify an init.sh file for the app to run",
 						},
+						cli.StringFlag{
+							Name:  "app-hash",
+							Value: "",
+							Usage: "Specify the app's initial hash. Prefix with 0x if it's hex",
+						},
 					},
 				},
 				{
@@ -140,6 +145,10 @@ func main() {
 					Name:  "publish-all,P",
 					Usage: "Publish all exposed ports to random ports",
 				}, // or should we make random be default, and let users attempt to force the port?
+				cli.BoolFlag{
+					Name:  "no-tmsp",
+					Usage: "Use a null, in-process app",
+				},
 				machFlag,
 			},
 			Action: func(c *cli.Context) {

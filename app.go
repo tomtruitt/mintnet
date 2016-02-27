@@ -34,6 +34,7 @@ func cmdStart(c *cli.Context) {
 	if len(seedMachines) == 0 {
 		seedMachines = machines
 	}
+	noTMSP := c.Bool("no-tmsp")
 
 	// chain config tells us which validator set we're working with (named or anon)
 	chainCfg, err := ReadBlockchainConfig(base)
@@ -75,15 +76,22 @@ func cmdStart(c *cli.Context) {
 				errCh <- err
 				return
 			}
-			if err := startTMData(mach, app); err != nil {
-				errCh <- err
-				return
+
+			// if noTMSP, we ignore socket and app containers
+			// and just use an in-process null app
+			if !noTMSP {
+				// XXX: this isn't even used!
+				if err := startTMData(mach, app); err != nil {
+					errCh <- err
+					return
+				}
+				if err := startTMApp(mach, app); err != nil {
+					errCh <- err
+					return
+				}
 			}
-			if err := startTMApp(mach, app); err != nil {
-				errCh <- err
-				return
-			}
-			seed, err := startTMNode(mach, app, seeds, randomPorts)
+
+			seed, err := startTMNode(mach, app, seeds, randomPorts, noTMSP)
 			if err != nil {
 				errCh <- err
 				return
@@ -172,7 +180,7 @@ func listMachinesFromBase(base string) ([]string, error) {
 */
 
 func startTMCommon(mach, app string) error {
-	args := []string{"ssh", mach, Fmt(`docker run --name %v_tmcommon --entrypoint /bin/echo tendermint/tmbase`, app)}
+	args := []string{"ssh", mach, Fmt(`docker run --name %v_tmcommon --entrypoint true tendermint/tmbase`, app)}
 	if !runProcess("start-tmcommon-"+mach, "docker-machine", args) {
 		return errors.New("Failed to start tmcommon on machine " + mach)
 	}
@@ -224,18 +232,24 @@ func startTMApp(mach, app string) error {
 	return nil
 }
 
-func startTMNode(mach, app string, seeds []string, randomPort bool) (*ValidatorConfig, error) {
+func startTMNode(mach, app string, seeds []string, randomPort, noTMSP bool) (*ValidatorConfig, error) {
 	portString := "-p 46656:46656 -p 46657:46657"
 	if randomPort {
 		portString = "--publish-all"
 	}
 
 	proxyApp := Fmt("tcp://%v_tmapp:46658", app)
+	tmspConditions := Fmt(` --link %v_tmapp `, app)
+	if noTMSP {
+		proxyApp = "nilapp" // in-proc nil app
+		tmspConditions = "" // tmcommon and tmapp weren't started
+	}
 	tmRoot := "/data/tendermint/core"
-	args := []string{"ssh", mach, Fmt(`docker run %v --name %v_tmnode --volumes-from %v_tmcommon -d `+
-		`--link %v_tmapp -e TMNAME="%v" -e TMSEEDS="%v" -e TMROOT="%v" -e PROXYAPP="%v" `+
+	args := []string{"ssh", mach, Fmt(`docker run -d %v --name %v_tmnode --volumes-from %v_tmcommon %v`+
+		`-e TMNAME="%v" -e TMSEEDS="%v" -e TMROOT="%v" -e PROXYAPP="%v" `+
 		`tendermint/tmbase /data/tendermint/core/init.sh`,
-		portString, app, app, app, eB(mach), eB(strings.Join(seeds, ",")), tmRoot, eB(proxyApp))}
+		portString, app, app, tmspConditions,
+		eB(mach), eB(strings.Join(seeds, ",")), tmRoot, eB(proxyApp))}
 	if !runProcess("start-tmnode-"+mach, "docker-machine", args) {
 		return nil, errors.New("Failed to start tmnode on machine " + mach)
 	}

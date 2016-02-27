@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"fmt"
 	"path"
 	"time"
@@ -70,6 +71,20 @@ func cmdChainInit(c *cli.Context) {
 	base := args[0]
 	machines := ParseMachines(c.GlobalString("machines"))
 	app := c.String("app")
+
+	var appHash []byte
+	appHashString := c.String("app-hash")
+	if appHashString != "" {
+		if len(appHashString) >= 2 && appHashString[:2] == "0x" {
+			var err error
+			appHash, err = hex.DecodeString(appHashString[2:])
+			if err != nil {
+				Exit(err.Error())
+			}
+		} else {
+			appHash = []byte(appHashString)
+		}
+	}
 
 	err := initDataDirectory(base)
 	if err != nil {
@@ -152,7 +167,7 @@ func cmdChainInit(c *cli.Context) {
 		GenesisTime: time.Now(),
 		ChainID:     "chain-" + RandStr(6),
 		Validators:  genVals,
-		AppHash:     nil,
+		AppHash:     appHash,
 	}
 
 	// Write genesis file.
@@ -297,7 +312,7 @@ git fetch origin $BRANCH
 git checkout $BRANCH
 make install
 
-tendermint node --fast_sync=false --seeds="$TMSEEDS" --moniker="$TMNAME" --proxy_app="$PROXYAPP"`)
+tendermint node --seeds="$TMSEEDS" --moniker="$TMNAME" --proxy_app="$PROXYAPP"`)
 
 	err = WriteFile(path.Join(dir, "init.sh"), scriptBytes, 0777)
 	return err
