@@ -412,6 +412,7 @@ func cmdStop(c *cli.Context) {
 			defer wg.Done()
 			stopTMCore(mach, app)
 			stopTMApp(mach, app)
+			stopTMData(mach, app)
 		}(mach)
 	}
 	wg.Wait()
@@ -458,10 +459,10 @@ func cmdRm(c *cli.Context) {
 		wg.Add(1)
 		go func(mach string) {
 			defer wg.Done()
-			rmContainer(mach, app, force)
-			rmContainer(mach, app, force)
-			rmContainer(mach, app, force)
-			rmContainer(mach, app, force)
+			rmContainer(mach, Fmt("%v_tmcommon", app), force)
+			rmContainer(mach, Fmt("%v_tmdata", app), force)
+			rmContainer(mach, Fmt("%v_tmapp", app), force)
+			rmContainer(mach, Fmt("%v_tmcore", app), force)
 		}(mach)
 	}
 	wg.Wait()
