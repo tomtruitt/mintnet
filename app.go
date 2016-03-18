@@ -452,67 +452,30 @@ func cmdRm(c *cli.Context) {
 	machines := ParseMachines(c.String("machines"))
 	force := c.Bool("force")
 
-	if force {
-		// Stop TMCore/TMApp if running
-		var wg sync.WaitGroup
-		for _, mach := range machines {
-			wg.Add(1)
-			go func(mach string) {
-				defer wg.Done()
-				stopTMData(mach, app)
-				stopTMCore(mach, app)
-				stopTMApp(mach, app)
-			}(mach)
-		}
-		wg.Wait()
-	}
-
-	// Initialize TMCommon, TMApp, and TMCore container on each machine
+	// Remove TMCommon, TMApp, and TMNode container on each machine
 	var wg sync.WaitGroup
 	for _, mach := range machines {
 		wg.Add(1)
 		go func(mach string) {
 			defer wg.Done()
-			rmTMCommon(mach, app)
-			rmTMData(mach, app)
-			rmTMApp(mach, app)
-			rmTMCore(mach, app)
+			rmContainer(mach, app, force)
+			rmContainer(mach, app, force)
+			rmContainer(mach, app, force)
+			rmContainer(mach, app, force)
 		}(mach)
 	}
 	wg.Wait()
 }
 
-func rmTMCommon(mach, app string) error {
-	// XXX: "-v" is clutch for dev. without it, volumes build up on disk.
-	// would be great if we had flags that pass through mintnet to docker
-	// but this is somewhat complicated by fact we are managing three or four containers with one command
-	args := []string{"ssh", mach, Fmt(`docker rm -v %v_tmcommon`, app)}
-	if !runProcess("rm-tmcommon-"+mach, "docker-machine", args) {
-		return errors.New("Failed to rm tmcommon on machine " + mach)
+func rmContainer(mach, container string, force bool) error {
+	opts := ""
+	if force {
+		opts = "-f"
+	} else {
+		opts = "-y"
 	}
-	return nil
-}
-
-func rmTMData(mach, app string) error {
-	args := []string{"ssh", mach, Fmt(`docker rm -v %v_tmdata`, app)}
-	if !runProcess("rm-tmdata-"+mach, "docker-machine", args) {
-		return errors.New("Failed to rm tmdata on machine " + mach)
+	args := []string{"ssh", mach, Fmt(`docker rm %v %v`, opts, container)}
+	if !runProcess(Fmt("rm-%v-%v", container, mach), "docker-machine", args) {
+		return errors.New(Fmt("Failed to rm %v on machine %v", container, mach))
 	}
-	return nil
-}
-
-func rmTMApp(mach, app string) error {
-	args := []string{"ssh", mach, Fmt(`docker rm -v %v_tmapp`, app)}
-	if !runProcess("rm-tmapp-"+mach, "docker-machine", args) {
-		return errors.New("Failed to rm tmapp on machine " + mach)
-	}
-	return nil
-}
-
-func rmTMCore(mach, app string) error {
-	args := []string{"ssh", mach, Fmt(`docker rm -v %v_tmcore`, app)}
-	if !runProcess("rm-tmcore-"+mach, "docker-machine", args) {
-		return errors.New("Failed to rm tmcore on machine " + mach)
-	}
-	return nil
 }
