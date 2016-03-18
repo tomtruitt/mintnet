@@ -59,7 +59,7 @@ func cmdStart(c *cli.Context) {
 	// necessary if we are running multiple chains on one machine
 	randomPorts := c.Bool("publish-all")
 
-	// Initialize TMData, TMApp, and TMNode container on each machine
+	// Initialize TMData, TMApp, and TMCore container on each machine
 	// We let nodes boot and then detect which port they're listening on to collect seeds
 	var wg sync.WaitGroup
 	seedsCh := make(chan *ValidatorConfig, len(machines))
@@ -91,7 +91,7 @@ func cmdStart(c *cli.Context) {
 				}
 			}
 
-			seed, err := startTMNode(mach, app, seeds, randomPorts, noTMSP)
+			seed, err := startTMCore(mach, app, seeds, randomPorts, noTMSP)
 			if err != nil {
 				errCh <- err
 				return
@@ -232,7 +232,7 @@ func startTMApp(mach, app string) error {
 	return nil
 }
 
-func startTMNode(mach, app string, seeds []string, randomPort, noTMSP bool) (*ValidatorConfig, error) {
+func startTMCore(mach, app string, seeds []string, randomPort, noTMSP bool) (*ValidatorConfig, error) {
 	portString := "-p 46656:46656 -p 46657:46657"
 	if randomPort {
 		portString = "--publish-all"
@@ -245,13 +245,13 @@ func startTMNode(mach, app string, seeds []string, randomPort, noTMSP bool) (*Va
 		tmspConditions = "" // tmcommon and tmapp weren't started
 	}
 	tmRoot := "/data/tendermint/core"
-	args := []string{"ssh", mach, Fmt(`docker run -d %v --name %v_tmnode --volumes-from %v_tmcommon %v`+
+	args := []string{"ssh", mach, Fmt(`docker run -d %v --name %v_tmcore --volumes-from %v_tmcommon %v`+
 		`-e TMNAME="%v" -e TMSEEDS="%v" -e TMROOT="%v" -e PROXYAPP="%v" `+
 		`tendermint/tmbase /data/tendermint/core/init.sh`,
 		portString, app, app, tmspConditions,
 		eB(mach), eB(strings.Join(seeds, ",")), tmRoot, eB(proxyApp))}
-	if !runProcess("start-tmnode-"+mach, "docker-machine", args) {
-		return nil, errors.New("Failed to start tmnode on machine " + mach)
+	if !runProcess("start-tmcore-"+mach, "docker-machine", args) {
+		return nil, errors.New("Failed to start tmcore on machine " + mach)
 	}
 
 	// Give it some time to install and make repo.
@@ -260,8 +260,8 @@ func startTMNode(mach, app string, seeds []string, randomPort, noTMSP bool) (*Va
 	// Get the node's validator info
 	// Need to retry to wait until tendermint is installed
 	for {
-		args = []string{"ssh", mach, Fmt(`docker exec %v_tmnode tendermint show_validator --log_level=error`, app)}
-		output, ok := runProcessGetResult("show-validator-tmnode-"+mach, "docker-machine", args)
+		args = []string{"ssh", mach, Fmt(`docker exec %v_tmcore tendermint show_validator --log_level=error`, app)}
+		output, ok := runProcessGetResult("show-validator-tmcore-"+mach, "docker-machine", args)
 		if !ok || output == "" {
 			fmt.Println(Yellow(Fmt("tendermint not yet installed in %v. Waiting...", mach)))
 			time.Sleep(time.Second * 5)
@@ -283,7 +283,7 @@ func startTMNode(mach, app string, seeds []string, randomPort, noTMSP bool) (*Va
 
 			var p2pPort, rpcPort = "46656", "46657"
 			if randomPort {
-				portMap, err := getContainerPortMap(mach, fmt.Sprintf("%v_tmnode", app))
+				portMap, err := getContainerPortMap(mach, fmt.Sprintf("%v_tmcore", app))
 				if err != nil {
 					return nil, err
 				}
@@ -365,23 +365,23 @@ func cmdRestart(c *cli.Context) {
 	app := args[0]
 	machines := ParseMachines(c.String("machines"))
 
-	// Restart TMApp, and TMNode container on each machine
+	// Restart TMApp, and TMCore container on each machine
 	var wg sync.WaitGroup
 	for _, mach := range machines {
 		wg.Add(1)
 		go func(mach string) {
 			defer wg.Done()
 			restartTMApp(mach, app)
-			restartTMNode(mach, app)
+			restartTMCore(mach, app)
 		}(mach)
 	}
 	wg.Wait()
 }
 
-func restartTMNode(mach, app string) error {
-	args := []string{"ssh", mach, Fmt(`docker start %v_tmnode`, app)}
-	if !runProcess("restart-tmnode-"+mach, "docker-machine", args) {
-		return errors.New("Failed to restart tmnode on machine " + mach)
+func restartTMCore(mach, app string) error {
+	args := []string{"ssh", mach, Fmt(`docker start %v_tmcore`, app)}
+	if !runProcess("restart-tmcore-"+mach, "docker-machine", args) {
+		return errors.New("Failed to restart tmcore on machine " + mach)
 	}
 	return nil
 }
@@ -404,13 +404,13 @@ func cmdStop(c *cli.Context) {
 	app := args[0]
 	machines := ParseMachines(c.String("machines"))
 
-	// Initialize TMCommon, TMData, TMApp, and TMNode container on each machine
+	// Initialize TMCommon, TMData, TMApp, and TMCore container on each machine
 	var wg sync.WaitGroup
 	for _, mach := range machines {
 		wg.Add(1)
 		go func(mach string) {
 			defer wg.Done()
-			stopTMNode(mach, app)
+			stopTMCore(mach, app)
 			stopTMApp(mach, app)
 		}(mach)
 	}
@@ -425,10 +425,10 @@ func stopTMData(mach, app string) error {
 	return nil
 }
 
-func stopTMNode(mach, app string) error {
-	args := []string{"ssh", mach, Fmt(`docker stop %v_tmnode`, app)}
-	if !runProcess("stop-tmnode-"+mach, "docker-machine", args) {
-		return errors.New("Failed to stop tmnode on machine " + mach)
+func stopTMCore(mach, app string) error {
+	args := []string{"ssh", mach, Fmt(`docker stop %v_tmcore`, app)}
+	if !runProcess("stop-tmcore-"+mach, "docker-machine", args) {
+		return errors.New("Failed to stop tmcore on machine " + mach)
 	}
 	return nil
 }
@@ -453,21 +453,21 @@ func cmdRm(c *cli.Context) {
 	force := c.Bool("force")
 
 	if force {
-		// Stop TMNode/TMApp if running
+		// Stop TMCore/TMApp if running
 		var wg sync.WaitGroup
 		for _, mach := range machines {
 			wg.Add(1)
 			go func(mach string) {
 				defer wg.Done()
 				stopTMData(mach, app)
-				stopTMNode(mach, app)
+				stopTMCore(mach, app)
 				stopTMApp(mach, app)
 			}(mach)
 		}
 		wg.Wait()
 	}
 
-	// Initialize TMCommon, TMApp, and TMNode container on each machine
+	// Initialize TMCommon, TMApp, and TMCore container on each machine
 	var wg sync.WaitGroup
 	for _, mach := range machines {
 		wg.Add(1)
@@ -476,7 +476,7 @@ func cmdRm(c *cli.Context) {
 			rmTMCommon(mach, app)
 			rmTMData(mach, app)
 			rmTMApp(mach, app)
-			rmTMNode(mach, app)
+			rmTMCore(mach, app)
 		}(mach)
 	}
 	wg.Wait()
@@ -509,10 +509,10 @@ func rmTMApp(mach, app string) error {
 	return nil
 }
 
-func rmTMNode(mach, app string) error {
-	args := []string{"ssh", mach, Fmt(`docker rm -v %v_tmnode`, app)}
-	if !runProcess("rm-tmnode-"+mach, "docker-machine", args) {
-		return errors.New("Failed to rm tmnode on machine " + mach)
+func rmTMCore(mach, app string) error {
+	args := []string{"ssh", mach, Fmt(`docker rm -v %v_tmcore`, app)}
+	if !runProcess("rm-tmcore-"+mach, "docker-machine", args) {
+		return errors.New("Failed to rm tmcore on machine " + mach)
 	}
 	return nil
 }

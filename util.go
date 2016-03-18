@@ -12,7 +12,7 @@ import (
 )
 
 // Copy a file (or dir recursively) from srcPath (local machine) to
-// dstPath in the tmnode container.
+// dstPath in the tmcore container.
 func copyToMachine(mach string, app string, srcPath string, dstPath string, copyContents bool) error {
 
 	// First, copy the file to a temporary location

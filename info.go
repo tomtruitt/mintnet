@@ -24,7 +24,7 @@ func cmdPorts(c *cli.Context) {
 	appName := args[0]
 	machines := ParseMachines(c.GlobalString("machines"))
 	for _, mach := range machines {
-		portMap, err := getContainerPortMap(mach, fmt.Sprintf("%v_tmnode", appName))
+		portMap, err := getContainerPortMap(mach, fmt.Sprintf("%v_tmcore", appName))
 		if err != nil {
 			Exit(err.Error())
 		}
