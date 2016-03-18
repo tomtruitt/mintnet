@@ -81,23 +81,18 @@ func cmdDestroy(c *cli.Context) {
 	machines := ParseMachines(c.String("machines"))
 
 	// Destroy each machine.
-	//var wg sync.WaitGroup
+	var wg sync.WaitGroup
 	for _, mach := range machines {
-		//wg.Add(1)
-		//go func(mach string) {
-		//defer wg.Done()
-		err := stopMachine(mach)
-		if err != nil {
-			fmt.Println(Red(err.Error()))
-			return
-		}
-		err = removeMachine(mach)
-		if err != nil {
-			fmt.Println(Red(err.Error()))
-		}
-		//}(mach)
+		wg.Add(1)
+		go func(mach string) {
+			defer wg.Done()
+			err := removeMachine(mach)
+			if err != nil {
+				fmt.Println(Red(err.Error()))
+			}
+		}(mach)
 	}
-	//wg.Wait()
+	wg.Wait()
 
 	fmt.Println("Success!")
 }
@@ -156,7 +151,7 @@ func stopMachine(mach string) error {
 // Remove a machine
 // mach: name of machine
 func removeMachine(mach string) error {
-	args := []string{"rm", mach}
+	args := []string{"rm", "-f", mach}
 	if !runProcess("remove-"+mach, "docker-machine", args) {
 		return errors.New("Failed to remove machine " + mach)
 	}
