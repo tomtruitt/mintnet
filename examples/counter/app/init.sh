@@ -9,4 +9,4 @@ git fetch origin $BRANCH
 git checkout $BRANCH
 make install
 
-counter --serial
+counter --serial --addr="unix:///data/tendermint/app/app.sock"

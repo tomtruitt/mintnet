@@ -30,7 +30,7 @@ func cmdDocker(c *cli.Context) {
 
 func dockerCmd(mach string, args []string) error {
 	args = []string{"ssh", mach, "docker " + strings.Join(args, " ")}
-	if !runProcess("docker-cmd-"+mach, "docker-machine", args) {
+	if !runProcess("docker-cmd-"+mach, "docker-machine", args, true) {
 		return errors.New("Failed to exec docker command on machine " + mach)
 	}
 	return nil
@@ -69,7 +69,7 @@ func createMachines(machines []string, args []string) (errs []error) {
 func createMachine(args []string, mach string) error {
 	args = append([]string{"create"}, args...)
 	args = append(args, mach)
-	if !runProcess("create-"+mach, "docker-machine", args) {
+	if !runProcess("create-"+mach, "docker-machine", args, true) {
 		return errors.New("Failed to create machine " + mach)
 	}
 	return nil
@@ -130,7 +130,7 @@ func provisionMachines(machines []string, args []string) (errs []error) {
 func provisionMachine(args []string, mach string) error {
 	args = append([]string{"provision"}, args...)
 	args = append(args, mach)
-	if !runProcess("provision-"+mach, "docker-machine", args) {
+	if !runProcess("provision-"+mach, "docker-machine", args, true) {
 		return errors.New("Failed to provision machine " + mach)
 	}
 	return nil
@@ -142,7 +142,7 @@ func provisionMachine(args []string, mach string) error {
 // mach: name of machine
 func stopMachine(mach string) error {
 	args := []string{"stop", mach}
-	if !runProcess("stop-"+mach, "docker-machine", args) {
+	if !runProcess("stop-"+mach, "docker-machine", args, true) {
 		return errors.New("Failed to stop machine " + mach)
 	}
 	return nil
@@ -152,7 +152,7 @@ func stopMachine(mach string) error {
 // mach: name of machine
 func removeMachine(mach string) error {
 	args := []string{"rm", "-f", mach}
-	if !runProcess("remove-"+mach, "docker-machine", args) {
+	if !runProcess("remove-"+mach, "docker-machine", args, true) {
 		return errors.New("Failed to remove machine " + mach)
 	}
 	return nil
@@ -161,7 +161,7 @@ func removeMachine(mach string) error {
 // List machine names that match prefix
 func listMachines(prefix string) ([]string, error) {
 	args := []string{"ls", "--quiet"}
-	output, ok := runProcessGetResult("list-machines", "docker-machine", args)
+	output, ok := runProcessGetResult("list-machines", "docker-machine", args, true)
 	if !ok {
 		return nil, errors.New("Failed to list machines")
 	}
@@ -183,7 +183,7 @@ func listMachines(prefix string) ([]string, error) {
 // mach: name of machine
 func getMachineIP(mach string) (string, error) {
 	args := []string{"ip", mach}
-	output, ok := runProcessGetResult("get-ip-"+mach, "docker-machine", args)
+	output, ok := runProcessGetResult("get-ip-"+mach, "docker-machine", args, true)
 	if !ok {
 		return "", errors.New("Failed to get ip of machine" + mach)
 	}

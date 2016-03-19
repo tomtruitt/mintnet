@@ -20,7 +20,7 @@ func main() {
 	app := cli.NewApp()
 	app.Name = "mintnet"
 	app.Usage = "mintnet [command] [args...]"
-	App.Version = "0.0.2"
+	app.Version = "0.0.2"
 	app.Commands = []cli.Command{
 		{
 			Name:      "info",
@@ -138,7 +138,7 @@ func main() {
 			ArgsUsage: "[appName] [baseDir]",
 			Flags: []cli.Flag{
 				cli.StringFlag{
-					Name:  "seed-machines",
+					Name:  "seeds",
 					Value: "",
 					Usage: "Comma separated list of machine names for seed, defaults to --machines",
 				},

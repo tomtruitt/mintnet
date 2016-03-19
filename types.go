@@ -18,16 +18,9 @@ type ValidatorSet struct {
 }
 
 // validator on a chain
-type ValidatorConfig struct {
+type CoreInfo struct {
 	Validator *Validator `json:"validator"`
 	P2PAddr   string     `json:"p2p_addr"`
 	RPCAddr   string     `json:"rpc_addr"`
 	Index     int        `json:"index,omitempty"`
-}
-
-// config details
-type BlockchainConfig struct {
-	ID         string             `json:"id"`
-	ValSetID   string             `json:"val_set_id"`
-	Validators []*ValidatorConfig `json:"validators"`
 }
