@@ -33,6 +33,8 @@ func cmdStart(c *cli.Context) {
 		seeds = strings.Split(seedsStr, ",")
 	}
 	noTMSP := c.Bool("no-tmsp")
+	tmcoreImage := c.String("tmcore-image")
+	tmappImage := c.String("tmapp-image")
 
 	// Initialize TMData, TMApp, and TMCore container on each machine
 	// We let nodes boot and then detect which port they're listening on to collect CoreInfos
@@ -59,13 +61,13 @@ func cmdStart(c *cli.Context) {
 					errCh <- err
 					return
 				}
-				if err := startTMApp(mach, app); err != nil {
+				if err := startTMApp(mach, app, tmappImage); err != nil {
 					errCh <- err
 					return
 				}
 			}
 
-			coreInfo, err := startTMCore(mach, app, nil, randomPorts, noTMSP)
+			coreInfo, err := startTMCore(mach, app, nil, randomPorts, noTMSP, tmcoreImage)
 			if err != nil {
 				errCh <- err
 				return
@@ -170,16 +172,16 @@ func startTMData(mach, app string) error {
 	return errors.New("Failed to start tmdata on machine " + mach + " (timeout)")
 }
 
-func startTMApp(mach, app string) error {
+func startTMApp(mach, app, image string) error {
 	args := []string{"ssh", mach, Fmt(`docker run --name %v_tmapp --volumes-from %v_tmcommon -d `+
-		`tendermint/tmbase /data/tendermint/app/init.sh`, app, app)}
+		`%v /data/tendermint/app/init.sh`, app, app, image)}
 	if !runProcess("start-tmapp-"+mach, "docker-machine", args, true) {
 		return errors.New("Failed to start tmapp on machine " + mach)
 	}
 	return nil
 }
 
-func startTMCore(mach, app string, seeds []string, randomPort, noTMSP bool) (*CoreInfo, error) {
+func startTMCore(mach, app string, seeds []string, randomPort, noTMSP bool, image string) (*CoreInfo, error) {
 	portString := "-p 46656:46656 -p 46657:46657"
 	if randomPort {
 		portString = "--publish-all"
@@ -200,9 +202,9 @@ func startTMCore(mach, app string, seeds []string, randomPort, noTMSP bool) (*Co
 	tmRoot := "/data/tendermint/core"
 	args := []string{"ssh", mach, Fmt(`docker run -d %v --name %v_tmcore --volumes-from %v_tmcommon %v`+
 		`-e TMNAME="%v" -e TMSEEDS="%v" -e TMROOT="%v" -e PROXYAPP="%v" `+
-		`tendermint/tmbase /data/tendermint/core/init.sh`,
+		`%v /data/tendermint/core/init.sh`,
 		portString, app, app, tmspConditions,
-		eB(mach), eB(strings.Join(seeds, ",")), tmRoot, eB(proxyApp))}
+		eB(mach), eB(strings.Join(seeds, ",")), tmRoot, eB(proxyApp), image)}
 	if !runProcess("start-tmcore-"+mach, "docker-machine", args, true) {
 		return nil, errors.New("Failed to start tmcore on machine " + mach)
 	}
@@ -255,7 +257,7 @@ func startTMCore(mach, app string, seeds []string, randomPort, noTMSP bool) (*Co
 			// get pubkey from rpc endpoint
 			// try a few times in case the rpc server is slow to start
 			var result ctypes.TMResult
-			for i := 0; i < 5; i++ {
+			for i := 0; i < 10; i++ {
 				time.Sleep(time.Second)
 				c := client.NewClientURI(fmt.Sprintf("%s", coreInfo.RPCAddr))
 				if _, err = c.Call("status", nil, &result); err != nil {
