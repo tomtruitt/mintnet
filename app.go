@@ -161,7 +161,7 @@ func startTMData(mach, app string) error {
 	if !runProcess("start-tmdata-"+mach, "docker-machine", args, true) {
 		return errors.New("Failed to start tmdata on machine " + mach)
 	}
-	for i := 1; i < 10; i++ { // TODO configure
+	for i := 1; i < 20; i++ { // TODO configure
 		time.Sleep(time.Duration(i) * time.Second)
 		if checkFileExists(mach, app+"_tmdata", "/data/tendermint/data/data.sock") {
 			return nil

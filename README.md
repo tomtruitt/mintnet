@@ -56,3 +56,7 @@ Don't forget to destroy your createed machines!
 ```
 mintnet destroy --machines="mach1,mach2,mach3,mach4"
 ```
+
+### Using VirtualBox on Mac OSX
+
+If you're experiencing slow network conditions on a local virtualbox VM, see [this link](https://github.com/docker/kitematic/issues/577#issuecomment-163493192).

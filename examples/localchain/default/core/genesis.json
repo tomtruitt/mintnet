@@ -1,0 +1,15 @@
+{
+	"app_hash": "",
+	"chain_id": "chain-iqwZgb",
+	"genesis_time": "2016-03-24T23:29:20.457Z",
+	"validators": [
+		{
+			"amount": 1,
+			"name": "default",
+			"pub_key": [
+				1,
+				"C9D3B06E19CB8899B3F7942142B2DA61AC4292814945C7FE6D652234CC55A76E"
+			]
+		}
+	]
+}
