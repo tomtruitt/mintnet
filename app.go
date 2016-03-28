@@ -426,8 +426,6 @@ func rmContainer(mach, container string, force bool) error {
 	opts := ""
 	if force {
 		opts = "-f"
-	} else {
-		opts = "-y"
 	}
 	args := []string{"ssh", mach, Fmt(`docker rm %v %v`, opts, container)}
 	if !runProcess(Fmt("rm-%v-%v", container, mach), "docker-machine", args, true) {
