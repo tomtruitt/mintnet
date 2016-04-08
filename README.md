@@ -11,7 +11,11 @@ To create machines on DigitalOcean:
 ```bash
 mintnet create -- --driver=digitalocean --digitalocean-access-token=YOUR_ACCCESS_TOKEN
 ```
-**Note:** adding `export DIGITALOCEAN_ACCESS_TOKEN=your_access_token` to your `~/.bashrc` will make your life easier when frequently creating testnets.
+**Note:** adding `export DIGITALOCEAN_ACCESS_TOKEN=your_access_token` to your `~/.bashrc` will make your life easier when frequently creating new mintnets. In that case all you need is:
+
+```bash
+mintnet create -- --driver=digitalocean
+```
 
 Or, to create machines on AWS:
 
