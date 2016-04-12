@@ -43,12 +43,19 @@ func cmdStart(c *cli.Context) {
 	errCh := make(chan error, len(machines))
 	for _, mach := range machines {
 		wg.Add(1)
+		maybeSleep(len(machines), 2000)
 		go func(mach string) {
+			maybeSleep(len(machines), 5000)
+
 			defer wg.Done()
 			if err := startTMCommon(mach, app); err != nil {
 				errCh <- err
 				return
 			}
+
+			// attempt to avoid aws ec2 request limit errors
+			maybeSleep(len(machines), 5000)
+
 			if err := copyNodeDir(mach, app, base); err != nil {
 				errCh <- err
 				return
@@ -67,6 +74,8 @@ func cmdStart(c *cli.Context) {
 				}
 			}
 
+			// attempt to avoid aws ec2 request limit errors
+			maybeSleep(len(machines), 5000)
 			coreInfo, err := startTMCore(mach, app, nil, randomPorts, noTMSP, tmcoreImage)
 			if err != nil {
 				errCh <- err
@@ -106,6 +115,24 @@ func cmdStart(c *cli.Context) {
 	wg.Wait()
 
 	fmt.Println(Green("Done launching tendermint network for " + app))
+
+	if randomPorts {
+		// dial the seeds
+		fmt.Println(Green("Instruct nodes to dial eachother"))
+		for _, val := range valConfs {
+			wg.Add(1)
+			go func(rpcAddr string) {
+				maybeSleep(len(valConfs), 2000)
+				defer wg.Done()
+				if err := dialSeeds(rpcAddr, seeds); err != nil {
+					fmt.Println(Red(err.Error()))
+					return
+				}
+			}(val.RPCAddr)
+		}
+		wg.Wait()
+	}
+	fmt.Println(Green(Fmt("Done launching tendermint network for %v. Took %v", app, time.Since(startTime))))
 }
 
 /*
@@ -326,6 +353,7 @@ func cmdRestart(c *cli.Context) {
 	for _, mach := range machines {
 		wg.Add(1)
 		go func(mach string) {
+			maybeSleep(len(machines), 2000)
 			defer wg.Done()
 			restartTMApp(mach, app)
 			restartTMCore(mach, app)
@@ -365,6 +393,7 @@ func cmdStop(c *cli.Context) {
 	for _, mach := range machines {
 		wg.Add(1)
 		go func(mach string) {
+			maybeSleep(len(machines), 2000)
 			defer wg.Done()
 			stopTMCore(mach, app)
 			stopTMApp(mach, app)
@@ -410,10 +439,28 @@ func cmdRm(c *cli.Context) {
 	force := c.Bool("force")
 
 	// Remove TMCommon, TMApp, and TMNode container on each machine
+	if force {
+		// Stop TMCore/TMApp if running
+		var wg sync.WaitGroup
+		for _, mach := range machines {
+			wg.Add(1)
+			go func(mach string) {
+				maybeSleep(len(machines), 2000)
+				defer wg.Done()
+				stopTMData(mach, app)
+				stopTMCore(mach, app)
+				stopTMApp(mach, app)
+			}(mach)
+		}
+		wg.Wait()
+	}
+
+	// Initialize TMCommon, TMApp, and TMCore container on each machine
 	var wg sync.WaitGroup
 	for _, mach := range machines {
 		wg.Add(1)
 		go func(mach string) {
+			maybeSleep(len(machines), 2000)
 			defer wg.Done()
 			rmContainer(mach, Fmt("%v_tmcommon", app), force)
 			rmContainer(mach, Fmt("%v_tmdata", app), force)
