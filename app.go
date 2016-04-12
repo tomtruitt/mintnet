@@ -41,7 +41,7 @@ func cmdStart(c *cli.Context) {
 	var wg sync.WaitGroup
 	coreInfosCh := make(chan *CoreInfo, len(machines))
 	errCh := make(chan error, len(machines))
-	for _, mach := range machines {
+	for _, machName := range machines {
 		wg.Add(1)
 		maybeSleep(len(machines), 2000)
 		go func(mach string) {
@@ -288,6 +288,7 @@ func startTMCore(mach, app string, seeds []string, randomPort, noTMSP bool, imag
 				time.Sleep(time.Second)
 				c := client.NewClientURI(fmt.Sprintf("%s", coreInfo.RPCAddr))
 				if _, err = c.Call("status", nil, &result); err != nil {
+					fmt.Println(Yellow(Fmt("Error getting rpc status for %v: %v", valConfig.RPCAddr, err)))
 					continue
 				}
 				status := result.(*ctypes.ResultStatus)
