@@ -26,8 +26,9 @@ func main() {
 			Name:      "info",
 			Usage:     "Information about running containers",
 			ArgsUsage: "[appName]",
-			Action: func(c *cli.Context) {
+			Action: func(c *cli.Context) error {
 				cmdInfo(c)
+				return nil
 			},
 			Flags: []cli.Flag{machFlag},
 			Subcommands: []cli.Command{
@@ -35,8 +36,9 @@ func main() {
 					Name:      "port",
 					Usage:     "Print container port mapping",
 					ArgsUsage: "[appName]",
-					Action: func(c *cli.Context) {
+					Action: func(c *cli.Context) error {
 						cmdPorts(c)
+						return nil
 					},
 				},
 			},
@@ -49,16 +51,18 @@ func main() {
 			Flags: []cli.Flag{
 				machFlag,
 			},
-			Action: func(c *cli.Context) {
+			Action: func(c *cli.Context) error {
 				cmdInit(c)
+				return nil
 			},
 			Subcommands: []cli.Command{
 				{
 					Name:      "chain",
 					Usage:     "Initialize a new blockchain",
 					ArgsUsage: "[baseDir]",
-					Action: func(c *cli.Context) {
+					Action: func(c *cli.Context) error {
 						cmdChainInit(c)
+						return nil
 					},
 					Flags: []cli.Flag{
 						cli.StringFlag{
@@ -82,8 +86,9 @@ func main() {
 					Name:      "validator-set",
 					Usage:     "Initialize a new validator set",
 					ArgsUsage: "[baseDir]",
-					Action: func(c *cli.Context) {
+					Action: func(c *cli.Context) error {
 						cmdValidatorsInit(c)
+						return nil
 					},
 					Flags: []cli.Flag{
 						cli.IntFlag{
@@ -103,8 +108,9 @@ func main() {
 			Flags: []cli.Flag{
 				machFlag,
 			},
-			Action: func(c *cli.Context) {
+			Action: func(c *cli.Context) error {
 				cmdCreate(c)
+				return nil
 			},
 		},
 
@@ -115,8 +121,9 @@ func main() {
 			Flags: []cli.Flag{
 				machFlag,
 			},
-			Action: func(c *cli.Context) {
+			Action: func(c *cli.Context) error {
 				cmdProvision(c)
+				return nil
 			},
 		},
 
@@ -127,8 +134,9 @@ func main() {
 			Flags: []cli.Flag{
 				machFlag,
 			},
-			Action: func(c *cli.Context) {
+			Action: func(c *cli.Context) error {
 				cmdDestroy(c)
+				return nil
 			},
 		},
 
@@ -152,8 +160,9 @@ func main() {
 				},
 				machFlag,
 			},
-			Action: func(c *cli.Context) {
+			Action: func(c *cli.Context) error {
 				cmdStart(c)
+				return nil
 			},
 		},
 
@@ -164,8 +173,9 @@ func main() {
 			Flags: []cli.Flag{
 				machFlag,
 			},
-			Action: func(c *cli.Context) {
+			Action: func(c *cli.Context) error {
 				cmdRestart(c)
+				return nil
 			},
 		},
 
@@ -176,8 +186,9 @@ func main() {
 			Flags: []cli.Flag{
 				machFlag,
 			},
-			Action: func(c *cli.Context) {
+			Action: func(c *cli.Context) error {
 				cmdStop(c)
+				return nil
 			},
 		},
 
@@ -191,8 +202,9 @@ func main() {
 				},
 				machFlag,
 			},
-			Action: func(c *cli.Context) {
+			Action: func(c *cli.Context) error {
 				cmdRm(c)
+				return nil
 			},
 		},
 
@@ -202,8 +214,9 @@ func main() {
 			Flags: []cli.Flag{
 				machFlag,
 			},
-			Action: func(c *cli.Context) {
+			Action: func(c *cli.Context) error {
 				cmdDocker(c)
+				return nil
 			},
 		},
 	}
