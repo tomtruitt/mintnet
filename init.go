@@ -249,12 +249,8 @@ func initAppDirectory(base, app string) error {
 		scriptBytes = []byte(`#! /bin/bash
 # This is a sample bash script for a TMSP application
 
-cd app/
-git clone https://github.com/tendermint/nomnomcoin.git
-cd nomnomcoin
-npm install .
-
-node app.js --addr="unix:///data/tendermint/app/app.sock" --eyes="unix:///data/tendermint/data/data.sock"`)
+go get github.com/tendermint/tmsp/cmd/dummy
+dummy --addr="unix:///data/tendermint/app/app.sock" # --eyes="unix:///data/tendermint/data/data.sock"`)
 	} else {
 		var err error
 		scriptBytes, err = ReadFile(app)

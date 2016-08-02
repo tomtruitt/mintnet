@@ -36,6 +36,8 @@ func cmdStart(c *cli.Context) {
 	tmcoreImage := c.String("tmcore-image")
 	tmappImage := c.String("tmapp-image")
 
+	startTime := time.Now()
+
 	// Initialize TMData, TMApp, and TMCore container on each machine
 	// We let nodes boot and then detect which port they're listening on to collect CoreInfos
 	var wg sync.WaitGroup
@@ -43,19 +45,18 @@ func cmdStart(c *cli.Context) {
 	errCh := make(chan error, len(machines))
 	for _, machName := range machines {
 		wg.Add(1)
+		// attempt to avoid aws ec2 request limit errors ( :( )
 		maybeSleep(len(machines), 2000)
 		go func(mach string) {
-			maybeSleep(len(machines), 5000)
-
 			defer wg.Done()
+
+			maybeSleep(len(machines), 5000)
 			if err := startTMCommon(mach, app); err != nil {
 				errCh <- err
 				return
 			}
 
-			// attempt to avoid aws ec2 request limit errors
 			maybeSleep(len(machines), 5000)
-
 			if err := copyNodeDir(mach, app, base); err != nil {
 				errCh <- err
 				return
@@ -74,7 +75,6 @@ func cmdStart(c *cli.Context) {
 				}
 			}
 
-			// attempt to avoid aws ec2 request limit errors
 			maybeSleep(len(machines), 5000)
 			coreInfo, err := startTMCore(mach, app, nil, randomPorts, noTMSP, tmcoreImage)
 			if err != nil {
@@ -82,7 +82,7 @@ func cmdStart(c *cli.Context) {
 				return
 			}
 			coreInfosCh <- coreInfo
-		}(mach)
+		}(machName)
 	}
 	wg.Wait()
 
@@ -106,6 +106,7 @@ func cmdStart(c *cli.Context) {
 		wg.Add(1)
 		go func(rpcAddr string) {
 			defer wg.Done()
+			maybeSleep(len(coreInfos), 2000)
 			if err := dialSeeds(rpcAddr, seeds); err != nil {
 				fmt.Println(Red(err.Error()))
 				return
@@ -114,24 +115,6 @@ func cmdStart(c *cli.Context) {
 	}
 	wg.Wait()
 
-	fmt.Println(Green("Done launching tendermint network for " + app))
-
-	if randomPorts {
-		// dial the seeds
-		fmt.Println(Green("Instruct nodes to dial eachother"))
-		for _, val := range valConfs {
-			wg.Add(1)
-			go func(rpcAddr string) {
-				maybeSleep(len(valConfs), 2000)
-				defer wg.Done()
-				if err := dialSeeds(rpcAddr, seeds); err != nil {
-					fmt.Println(Red(err.Error()))
-					return
-				}
-			}(val.RPCAddr)
-		}
-		wg.Wait()
-	}
 	fmt.Println(Green(Fmt("Done launching tendermint network for %v. Took %v", app, time.Since(startTime))))
 }
 
@@ -288,7 +271,7 @@ func startTMCore(mach, app string, seeds []string, randomPort, noTMSP bool, imag
 				time.Sleep(time.Second)
 				c := client.NewClientURI(fmt.Sprintf("%s", coreInfo.RPCAddr))
 				if _, err = c.Call("status", nil, &result); err != nil {
-					fmt.Println(Yellow(Fmt("Error getting rpc status for %v: %v", valConfig.RPCAddr, err)))
+					fmt.Println(Yellow(Fmt("Error getting rpc status for %v: %v", coreInfo.RPCAddr, err)))
 					continue
 				}
 				status := result.(*ctypes.ResultStatus)
