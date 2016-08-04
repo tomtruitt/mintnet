@@ -422,7 +422,6 @@ func cmdRm(c *cli.Context) {
 	machines := ParseMachines(c.String("machines"))
 	force := c.Bool("force")
 
-	// Remove TMCommon, TMApp, and TMNode container on each machine
 	if force {
 		// Stop TMCore/TMApp if running
 		var wg sync.WaitGroup
@@ -439,7 +438,7 @@ func cmdRm(c *cli.Context) {
 		wg.Wait()
 	}
 
-	// Initialize TMCommon, TMApp, and TMCore container on each machine
+	// Remove TMCommon, TMApp, and TMNode container on each machine
 	var wg sync.WaitGroup
 	for _, mach := range machines {
 		wg.Add(1)
