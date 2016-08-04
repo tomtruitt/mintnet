@@ -101,11 +101,11 @@ func cmdChainInit(c *cli.Context) {
 
 	genVals := make([]tmtypes.GenesisValidator, len(machines))
 
-	//var valSetID string
+	var valSetID string
 	valSetDir := c.String("validator-set")
 	if valSetDir != "" {
 		// validator-set name is the last element of the path
-		//valSetID = path.Base(valSetDir)
+		valSetID = path.Base(valSetDir)
 
 		var valSet ValidatorSet
 		err := ReadJSONFile(&valSet, path.Join(valSetDir, "validator_set.json"))
@@ -143,7 +143,7 @@ func cmdChainInit(c *cli.Context) {
 			}
 		}
 	} else {
-		//valSetID = ValSetAnon
+		valSetID = ValSetAnon
 
 		// Initialize core dir and priv_validator.json's
 		for i, mach := range machines {
@@ -173,6 +173,28 @@ func cmdChainInit(c *cli.Context) {
 	// Write genesis file.
 	for _, mach := range machines {
 		genDoc.SaveAs(path.Join(base, mach, "core", "genesis.json"))
+	}
+
+	// Write genesis file.
+	for _, mach := range machines {
+		genDoc.SaveAs(path.Join(base, mach, "core", "genesis.json"))
+	}
+
+	// write the chain meta data (ie. validator set name and validators)
+	blockchainCfg := &BlockchainInfo{
+		ValSetID:   valSetID,
+		Validators: make([]*CoreInfo, len(genVals)),
+	}
+
+	for i, v := range genVals {
+		blockchainCfg.Validators[i] = &CoreInfo{
+			Validator: &Validator{ID: v.Name, PubKey: v.PubKey},
+			Index:     i, // XXX: we may want more control here
+		}
+	}
+	err = WriteBlockchainInfo(base, blockchainCfg)
+	if err != nil {
+		Exit(err.Error())
 	}
 
 	fmt.Println(Fmt("Successfully initialized %v node directories", len(machines)))

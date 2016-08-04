@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"path"
 	"strings"
 	"sync"
@@ -10,6 +13,7 @@ import (
 
 	. "github.com/tendermint/go-common"
 	client "github.com/tendermint/go-rpc/client"
+	"github.com/tendermint/go-wire"
 	ctypes "github.com/tendermint/tendermint/rpc/core/types"
 
 	"github.com/codegangsta/cli"
@@ -35,6 +39,13 @@ func cmdStart(c *cli.Context) {
 	noTMSP := c.Bool("no-tmsp")
 	tmcoreImage := c.String("tmcore-image")
 	tmappImage := c.String("tmapp-image")
+
+	// chain config tells us which validator set we're working with (named or anon)
+	chainCfg, err := ReadBlockchainInfo(base)
+	if err != nil {
+		Exit(err.Error())
+	}
+	chainCfg.ID = app
 
 	startTime := time.Now()
 
@@ -100,6 +111,21 @@ func cmdStart(c *cli.Context) {
 		}
 	}
 
+	// fill in validators and write chain config to file
+	for i, coreInfo := range coreInfos {
+		coreInfo.Index = chainCfg.Validators[i].Index
+		chainCfg.Validators[i] = coreInfo
+	}
+	if err := WriteBlockchainInfo(base, chainCfg); err != nil {
+		fmt.Println(string(wire.JSONBytes(chainCfg)))
+		Exit(err.Error())
+	}
+
+	// bail if anything failed; we've already written anyone that didnt to file
+	if err != nil {
+		Exit(err.Error())
+	}
+
 	// Dial the seeds
 	fmt.Println(Green("Instruct nodes to dial each other"))
 	for _, core := range coreInfos {
@@ -116,6 +142,19 @@ func cmdStart(c *cli.Context) {
 	wg.Wait()
 
 	fmt.Println(Green(Fmt("Done launching tendermint network for %v. Took %v", app, time.Since(startTime))))
+}
+
+func ReadBlockchainInfo(base string) (*BlockchainInfo, error) {
+	chainCfg := new(BlockchainInfo)
+	err := ReadJSONFile(chainCfg, path.Join(base, "chain_config.json"))
+	return chainCfg, err
+}
+
+func WriteBlockchainInfo(base string, chainCfg *BlockchainInfo) error {
+	b := wire.JSONBytes(chainCfg)
+	var buf bytes.Buffer
+	json.Indent(&buf, b, "", "\t")
+	return ioutil.WriteFile(path.Join(base, "chain_config.json"), buf.Bytes(), 0600)
 }
 
 /*

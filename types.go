@@ -24,3 +24,9 @@ type CoreInfo struct {
 	RPCAddr   string     `json:"rpc_addr"`
 	Index     int        `json:"index,omitempty"`
 }
+
+type BlockchainInfo struct {
+	ID         string      `json:"id"`
+	ValSetID   string      `json:"val_set_id"`
+	Validators []*CoreInfo `json:"validators"`
+}
