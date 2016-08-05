@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"path"
 	"strings"
 	"sync"
@@ -10,6 +13,7 @@ import (
 
 	. "github.com/tendermint/go-common"
 	client "github.com/tendermint/go-rpc/client"
+	"github.com/tendermint/go-wire"
 	ctypes "github.com/tendermint/tendermint/rpc/core/types"
 
 	"github.com/codegangsta/cli"
@@ -33,20 +37,37 @@ func cmdStart(c *cli.Context) {
 		seeds = strings.Split(seedsStr, ",")
 	}
 	noTMSP := c.Bool("no-tmsp")
+	tmcoreImage := c.String("tmcore-image")
+	tmappImage := c.String("tmapp-image")
+
+	// chain config tells us which validator set we're working with (named or anon)
+	chainCfg, err := ReadBlockchainInfo(base)
+	if err != nil {
+		Exit(err.Error())
+	}
+	chainCfg.ID = app
+
+	startTime := time.Now()
 
 	// Initialize TMData, TMApp, and TMCore container on each machine
 	// We let nodes boot and then detect which port they're listening on to collect CoreInfos
 	var wg sync.WaitGroup
 	coreInfosCh := make(chan *CoreInfo, len(machines))
 	errCh := make(chan error, len(machines))
-	for _, mach := range machines {
+	for _, machName := range machines {
 		wg.Add(1)
+		// attempt to avoid aws ec2 request limit errors ( :( )
+		maybeSleep(len(machines), 2000)
 		go func(mach string) {
 			defer wg.Done()
+
+			maybeSleep(len(machines), 5000)
 			if err := startTMCommon(mach, app); err != nil {
 				errCh <- err
 				return
 			}
+
+			maybeSleep(len(machines), 5000)
 			if err := copyNodeDir(mach, app, base); err != nil {
 				errCh <- err
 				return
@@ -59,19 +80,20 @@ func cmdStart(c *cli.Context) {
 					errCh <- err
 					return
 				}
-				if err := startTMApp(mach, app); err != nil {
+				if err := startTMApp(mach, app, tmappImage); err != nil {
 					errCh <- err
 					return
 				}
 			}
 
-			coreInfo, err := startTMCore(mach, app, nil, randomPorts, noTMSP)
+			maybeSleep(len(machines), 5000)
+			coreInfo, err := startTMCore(mach, app, nil, randomPorts, noTMSP, tmcoreImage)
 			if err != nil {
 				errCh <- err
 				return
 			}
 			coreInfosCh <- coreInfo
-		}(mach)
+		}(machName)
 	}
 	wg.Wait()
 
@@ -89,12 +111,28 @@ func cmdStart(c *cli.Context) {
 		}
 	}
 
+	// fill in validators and write chain config to file
+	for i, coreInfo := range coreInfos {
+		coreInfo.Index = chainCfg.Validators[i].Index
+		chainCfg.Validators[i] = coreInfo
+	}
+	if err := WriteBlockchainInfo(base, chainCfg); err != nil {
+		fmt.Println(string(wire.JSONBytes(chainCfg)))
+		Exit(err.Error())
+	}
+
+	// bail if anything failed; we've already written anyone that didnt to file
+	if err != nil {
+		Exit(err.Error())
+	}
+
 	// Dial the seeds
 	fmt.Println(Green("Instruct nodes to dial each other"))
 	for _, core := range coreInfos {
 		wg.Add(1)
 		go func(rpcAddr string) {
 			defer wg.Done()
+			maybeSleep(len(coreInfos), 2000)
 			if err := dialSeeds(rpcAddr, seeds); err != nil {
 				fmt.Println(Red(err.Error()))
 				return
@@ -103,7 +141,20 @@ func cmdStart(c *cli.Context) {
 	}
 	wg.Wait()
 
-	fmt.Println(Green("Done launching tendermint network for " + app))
+	fmt.Println(Green(Fmt("Done launching tendermint network for %v. Took %v", app, time.Since(startTime))))
+}
+
+func ReadBlockchainInfo(base string) (*BlockchainInfo, error) {
+	chainCfg := new(BlockchainInfo)
+	err := ReadJSONFile(chainCfg, path.Join(base, "chain_config.json"))
+	return chainCfg, err
+}
+
+func WriteBlockchainInfo(base string, chainCfg *BlockchainInfo) error {
+	b := wire.JSONBytes(chainCfg)
+	var buf bytes.Buffer
+	json.Indent(&buf, b, "", "\t")
+	return ioutil.WriteFile(path.Join(base, "chain_config.json"), buf.Bytes(), 0600)
 }
 
 /*
@@ -170,16 +221,16 @@ func startTMData(mach, app string) error {
 	return errors.New("Failed to start tmdata on machine " + mach + " (timeout)")
 }
 
-func startTMApp(mach, app string) error {
+func startTMApp(mach, app, image string) error {
 	args := []string{"ssh", mach, Fmt(`docker run --name %v_tmapp --volumes-from %v_tmcommon -d `+
-		`tendermint/tmbase /data/tendermint/app/init.sh`, app, app)}
+		`%v /data/tendermint/app/init.sh`, app, app, image)}
 	if !runProcess("start-tmapp-"+mach, "docker-machine", args, true) {
 		return errors.New("Failed to start tmapp on machine " + mach)
 	}
 	return nil
 }
 
-func startTMCore(mach, app string, seeds []string, randomPort, noTMSP bool) (*CoreInfo, error) {
+func startTMCore(mach, app string, seeds []string, randomPort, noTMSP bool, image string) (*CoreInfo, error) {
 	portString := "-p 46656:46656 -p 46657:46657"
 	if randomPort {
 		portString = "--publish-all"
@@ -200,9 +251,9 @@ func startTMCore(mach, app string, seeds []string, randomPort, noTMSP bool) (*Co
 	tmRoot := "/data/tendermint/core"
 	args := []string{"ssh", mach, Fmt(`docker run -d %v --name %v_tmcore --volumes-from %v_tmcommon %v`+
 		`-e TMNAME="%v" -e TMSEEDS="%v" -e TMROOT="%v" -e PROXYAPP="%v" `+
-		`tendermint/tmbase /data/tendermint/core/init.sh`,
+		`%v /data/tendermint/core/init.sh`,
 		portString, app, app, tmspConditions,
-		eB(mach), eB(strings.Join(seeds, ",")), tmRoot, eB(proxyApp))}
+		eB(mach), eB(strings.Join(seeds, ",")), tmRoot, eB(proxyApp), image)}
 	if !runProcess("start-tmcore-"+mach, "docker-machine", args, true) {
 		return nil, errors.New("Failed to start tmcore on machine " + mach)
 	}
@@ -255,10 +306,11 @@ func startTMCore(mach, app string, seeds []string, randomPort, noTMSP bool) (*Co
 			// get pubkey from rpc endpoint
 			// try a few times in case the rpc server is slow to start
 			var result ctypes.TMResult
-			for i := 0; i < 5; i++ {
+			for i := 0; i < 10; i++ {
 				time.Sleep(time.Second)
 				c := client.NewClientURI(fmt.Sprintf("%s", coreInfo.RPCAddr))
 				if _, err = c.Call("status", nil, &result); err != nil {
+					fmt.Println(Yellow(Fmt("Error getting rpc status for %v: %v", coreInfo.RPCAddr, err)))
 					continue
 				}
 				status := result.(*ctypes.ResultStatus)
@@ -324,6 +376,7 @@ func cmdRestart(c *cli.Context) {
 	for _, mach := range machines {
 		wg.Add(1)
 		go func(mach string) {
+			maybeSleep(len(machines), 2000)
 			defer wg.Done()
 			restartTMApp(mach, app)
 			restartTMCore(mach, app)
@@ -363,6 +416,7 @@ func cmdStop(c *cli.Context) {
 	for _, mach := range machines {
 		wg.Add(1)
 		go func(mach string) {
+			maybeSleep(len(machines), 2000)
 			defer wg.Done()
 			stopTMCore(mach, app)
 			stopTMApp(mach, app)
@@ -407,11 +461,28 @@ func cmdRm(c *cli.Context) {
 	machines := ParseMachines(c.String("machines"))
 	force := c.Bool("force")
 
+	if force {
+		// Stop TMCore/TMApp if running
+		var wg sync.WaitGroup
+		for _, mach := range machines {
+			wg.Add(1)
+			go func(mach string) {
+				maybeSleep(len(machines), 2000)
+				defer wg.Done()
+				stopTMData(mach, app)
+				stopTMCore(mach, app)
+				stopTMApp(mach, app)
+			}(mach)
+		}
+		wg.Wait()
+	}
+
 	// Remove TMCommon, TMApp, and TMNode container on each machine
 	var wg sync.WaitGroup
 	for _, mach := range machines {
 		wg.Add(1)
 		go func(mach string) {
+			maybeSleep(len(machines), 2000)
 			defer wg.Done()
 			rmContainer(mach, Fmt("%v_tmcommon", app), force)
 			rmContainer(mach, Fmt("%v_tmdata", app), force)

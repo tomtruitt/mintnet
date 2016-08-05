@@ -20,7 +20,7 @@ func main() {
 	app := cli.NewApp()
 	app.Name = "mintnet"
 	app.Usage = "mintnet [command] [args...]"
-	app.Version = "0.0.2"
+	app.Version = "0.1.0"
 	app.Commands = []cli.Command{
 		{
 			Name:      "info",
@@ -157,6 +157,16 @@ func main() {
 				cli.BoolFlag{
 					Name:  "no-tmsp",
 					Usage: "Use a null, in-process app",
+				},
+				cli.StringFlag{
+					Name:  "tmcore-image",
+					Usage: "Docker image to use for tendermint core",
+					Value: "tendermint/tmbase",
+				},
+				cli.StringFlag{
+					Name:  "tmapp-image",
+					Usage: "Docker image to use for tendermint app",
+					Value: "tendermint/tmbase",
 				},
 				machFlag,
 			},
