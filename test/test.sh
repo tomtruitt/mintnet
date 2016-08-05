@@ -1,14 +1,27 @@
 #! /bin/bash
-set -eu
+set -e
 
-# NOTE: DIGITALOCEAN_ACCESS_TOKEN must be set!
+if [[ "$MACH_PREFIX" == "" ]]; then
+	MACH_PREFIX=mach
+fi
 
-mintnet create -- --driver=digitalocean --digitalocean-image=docker
+if [[ "$N" == "" ]]; then
+	N=4
+fi
 
-mintnet init chain mytest_dir/
+BRANCH=`git rev-parse --abbrev-ref HEAD`
+echo "Current branch: $BRANCH"
 
-mintnet start mytest mytest_dir/
+if [[ "$BRANCH" == "master" || "$BRANCH" == "staging" ]]; then
+	# NOTE: DIGITALOCEAN_ACCESS_TOKEN must be set!
 
-bash test/run_test.sh
+	mintnet create --machines "${MACH_PREFIX}[1-$N]" -- --driver=digitalocean --digitalocean-image=docker
 
-bash test/destroy.sh my_test
+	mintnet init --machines "${MACH_PREFIX}[1-$N]" chain mytest_dir/
+
+	mintnet start --machines "${MACH_PREFIX}[1-$N]" mytest mytest_dir/
+
+	bash test/run_test.sh
+
+	bash test/destroy.sh my_test
+fi

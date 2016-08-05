@@ -1,13 +1,23 @@
 #! /bin/bash
-set -eu
+set -e
+
+if [[ "$MACH_PREFIX" == "" ]]; then
+	MACH_PREFIX=mach
+fi
+
+if [[ "$N" == "" ]]; then
+	N=4
+fi
+
+set -u
 
 function getIP(){
-	docker-machine ip mach$1
+	docker-machine ip ${MACH_PREFIX}$1
 }
 
 # wait for everyone to come online
 echo "Waiting for nodes to come online"
-for i in `seq 1 4`; do
+for i in `seq 1 $N`; do
 	addr="$(getIP $i):46657"
 	curl -s $addr/status > /dev/null
 	ERR=$?
@@ -21,7 +31,7 @@ done
 
 echo ""
 # run the test on each of them
-for i in `seq 1 4`; do
+for i in `seq 1 $N`; do
 	addr="$(getIP $i):46657"
 
 	# - assert everyone has 3 other peers
@@ -72,7 +82,7 @@ for i in `seq 1 4`; do
 	echo "Hash is updated locally. Checking on other nodes"
 
 	# check we get the same new hash on all other nodes
-	for j in `seq 1 4`; do
+	for j in `seq 1 $N`; do
 		if [[ "$i" != "$j" ]]; then
 			HASH3=`curl -s $(getIP $i):46657/status | jq .result[1].latest_app_hash`
 			
