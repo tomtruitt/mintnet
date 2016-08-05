@@ -20,7 +20,7 @@ func main() {
 	app := cli.NewApp()
 	app.Name = "mintnet"
 	app.Usage = "mintnet [command] [args...]"
-	app.Version = "0.0.2"
+	app.Version = "0.1.0"
 	app.Commands = []cli.Command{
 		{
 			Name:      "info",

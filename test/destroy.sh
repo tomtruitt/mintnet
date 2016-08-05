@@ -12,7 +12,8 @@ fi
 set -u
 
 echo "Stopping and removing testnet containers"
-mintnet stop mytest; mintnet rm mytest
+mintnet stop --machines="${MACH_PREFIX}[1-$N]" mytest
+mintnet rm --machines="${MACH_PREFIX}[1-$N]" mytest
 
 echo "Destroying machines"
 mintnet destroy --machines="${MACH_PREFIX}[1-$N]"
