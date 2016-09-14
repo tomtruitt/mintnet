@@ -23,7 +23,7 @@ By default this creates 4 new machines.  Check the help messages for more info, 
 Next, create the testnet configuration folders.
 
 ```
-mintnet init mytest_dir/
+mintnet init chain mytest_dir/
 ```
 
 This creates directories in `mytest_dir` for the application.
